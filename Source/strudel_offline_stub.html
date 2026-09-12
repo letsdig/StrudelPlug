@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>StrudelPlug offline stub</title></head>
+<body>
+<h1>StrudelPlug offline</h1>
+<p>Editor available in offline mode.</p>
+<textarea id="code" style="width:100%;height:200px">// offline //
+note("c3 d3 g3")</textarea>
+<script>
+  const t = document.getElementById('code');
+  window.strudelOffline = { getCode: () => t.value };
+</script>
+</body>
+</html>

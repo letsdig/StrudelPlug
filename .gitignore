@@ -1,0 +1,16 @@
+# Build artifacts
+build/
+Builds/LinuxMakefile/build/
+bin/
+*.o
+*.so
+*.a
+*.vst3
+
+# IDE and OS files
+.vscode/
+.idea/
+*.user
+.DS_Store
+*.swp
+*~
