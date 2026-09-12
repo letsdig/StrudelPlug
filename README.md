@@ -81,5 +81,6 @@ Then open or rescan your plugins in Bitwig Studio:
 
 ## 📜 License
 
-GPL-3.0 License.
+MIT License. See [LICENSE](LICENSE) for details.
 Built with JUCE 7 & Strudel.
+
