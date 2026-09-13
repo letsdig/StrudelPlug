@@ -157,11 +157,10 @@ void StrudelPlugAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             if (isPlaying != wasDawPlaying.load())
             {
                 wasDawPlaying.store (isPlaying);
-                lastPpqPosition.store (currentPpq);
-
                 if (dawSyncEnabled.load())
                 {
                     triggerBrowserPlayback (isPlaying, currentBpm, currentPpq, sigNum, sigDen);
+                    bridgeServer.flushAudioBuffer();
                 }
 
                 if (! isPlaying)
@@ -174,9 +173,10 @@ void StrudelPlugAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
             {
                 // Detect transport seek or loop wrap while playing
                 const double expectedPpq = lastPpqPosition.load() + ((double) numSamples / getSampleRate()) * (currentBpm / 60.0);
-                if (std::abs (currentPpq - expectedPpq) > 0.5)
+                if (std::abs (currentPpq - expectedPpq) > 0.25)
                 {
                     triggerBrowserSeek (currentPpq, currentBpm, sigNum, sigDen);
+                    bridgeServer.flushAudioBuffer();
                 }
             }
 

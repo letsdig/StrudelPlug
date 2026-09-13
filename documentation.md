@@ -54,7 +54,7 @@ $: note("c3 eb3 g3 bb3").midichan(1).midi()
 $: chord("<Cm7 Fm7 Gm7 Cm7>").voicing().midi()
 ```
 
-### 2.3 DAW Transport, Tempo & Phase Synchronization (v1.0.5+)
+### 2.3 DAW Transport, Tempo & Phase Synchronization (v1.0.6+)
 - When **SYNC DAW** is enabled in the bottom telemetry bar:
   - **Tempo & BPM Tracking**: Host DAW BPM is automatically synchronized to Strudel's pattern scheduler (`cps = DAW_BPM / 240.0`, `cpm = DAW_BPM / 4.0`).
   - **Beat & Phase Locking**: On transport start, loop wrap, or timeline seek, Strudel's cycle phase is locked to the host playhead (`startCycle = ppqPosition / 4.0`), keeping kick drums, downbeats, and polyrhythms sample-aligned with DAW audio and MIDI clips.
@@ -89,11 +89,11 @@ $: chord("<Cm7 Fm7 Gm7 Cm7>").voicing().midi()
 ### Installation Steps
 ```bash
 # 1. Download release archive
-tar -xzf StrudelPlug-v1.0.5-linux-x86_64.tar.gz
+tar -xzf StrudelPlug-v1.0.6-linux-x86_64.tar.gz
 
 # 2. Copy to VST3 folder
 mkdir -p ~/.vst3
-cp -r StrudelPlug-v1.0.5-linux-x86_64/StrudelPlug.vst3 ~/.vst3/
+cp -r StrudelPlug-v1.0.6-linux-x86_64/StrudelPlug.vst3 ~/.vst3/
 ```
 
 After installation, perform a plugin rescan in your DAW.

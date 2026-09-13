@@ -885,57 +885,44 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
         },
         setTransportPlay: function(play, transportInfo) {
             try {
-                const info = transportInfo || {};
-                const targetBpm = (typeof info.bpm === 'number' && info.bpm > 0) ? info.bpm : (CONFIG.dawBpm || 120.0);
-                const bpc = (typeof info.sigNum === 'number' && info.sigNum > 0) ? info.sigNum : 4;
-                const targetCps = targetBpm / (bpc * 60.0);
-                const cycle = (typeof info.ppq === 'number' ? info.ppq : 0.0) / bpc;
-                CONFIG.dawBpm = targetBpm;
-
                 if (play) {
                     CONFIG.transportPlaying = true;
                     resumeAllContexts();
 
+                    const info = transportInfo || {};
+                    const targetBpm = (typeof info.bpm === 'number' && info.bpm > 0) ? info.bpm : (CONFIG.dawBpm || 120.0);
+                    const bpc = (typeof info.sigNum === 'number' && info.sigNum > 0) ? info.sigNum : 4;
+                    const targetCps = targetBpm / (bpc * 60.0);
+                    const startCycle = (typeof info.ppq === 'number' ? info.ppq : 0.0) / bpc;
+                    CONFIG.dawBpm = targetBpm;
+
                     if (window.strudelMirror) {
-                        const repl = window.strudelMirror.repl;
-                        const sched = repl ? repl.scheduler : null;
-
-                        if (sched && sched.pattern) {
-                            // Pattern is already compiled in memory! Instant synchronous start:
-                            sched.setCps(targetCps);
-                            sched.lastEnd = cycle;
-                            sched.lastBegin = cycle;
-                            sched.num_cycles_at_cps_change = cycle;
-                            sched.num_ticks_since_cps_change = 0;
-
-                            if (sched.clock && typeof sched.clock.start === 'function') {
-                                sched.clock.start();
-                                sched.setStarted(true);
-                            } else if (typeof sched.start === 'function') {
-                                sched.start().then(() => {
-                                    sched.lastEnd = cycle;
-                                    sched.lastBegin = cycle;
-                                    sched.num_cycles_at_cps_change = cycle;
-                                    sched.num_ticks_since_cps_change = 0;
-                                }).catch(() => {});
+                        try {
+                            const repl = window.strudelMirror.repl;
+                            if (typeof window.strudelMirror.evaluate === 'function') {
+                                window.strudelMirror.evaluate();
+                                if (repl && repl.scheduler) {
+                                    repl.scheduler.setCps(targetCps);
+                                    repl.scheduler.lastEnd = startCycle;
+                                    repl.scheduler.lastBegin = startCycle;
+                                    repl.scheduler.num_cycles_at_cps_change = startCycle;
+                                    repl.scheduler.num_ticks_since_cps_change = 0;
+                                }
+                                return;
                             }
-
-                            try {
-                                const ed = window.strudelMirror.editor;
-                                document.dispatchEvent(new CustomEvent('repl-start', { detail: { view: ed } }));
-                                window.dispatchEvent(new CustomEvent('repl-start', { detail: { view: ed } }));
-                            } catch(e) {}
-                            return;
-                        }
-
-                        // No pattern yet in scheduler: evaluate editor code
-                        if (typeof window.strudelMirror.evaluate === 'function') {
-                            window.strudelMirror.evaluate();
-                            return;
-                        }
-                        if (repl && typeof repl.evaluate === 'function') {
-                            repl.evaluate(window.strudelMirror.code || "");
-                            return;
+                            if (repl && typeof repl.evaluate === 'function') {
+                                repl.evaluate(window.strudelMirror.code || "");
+                                if (repl.scheduler) {
+                                    repl.scheduler.setCps(targetCps);
+                                    repl.scheduler.lastEnd = startCycle;
+                                    repl.scheduler.lastBegin = startCycle;
+                                    repl.scheduler.num_cycles_at_cps_change = startCycle;
+                                    repl.scheduler.num_ticks_since_cps_change = 0;
+                                }
+                                return;
+                            }
+                        } catch(e) {
+                            console.warn("[JUCE-WebBridge] strudelMirror start error:", e);
                         }
                     }
 
@@ -943,36 +930,37 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                     playBtns.forEach(btn => btn.click());
                 } else {
                     CONFIG.transportPlaying = false;
-
-                    // Immediately silence all virtual MIDI notes
                     try {
                         virtualMidiOutput.allNotesOff();
                         window.postMessage('strudel-stop', '*');
                     } catch(e) {}
-
-                    // Stop the scheduler clock WITHOUT destroying the compiled pattern
                     let stoppedNatively = false;
-                    if (window.strudelMirror && window.strudelMirror.repl) {
-                        const repl = window.strudelMirror.repl;
-                        const sched = repl.scheduler;
-                        if (sched) {
-                            if (sched.clock && typeof sched.clock.stop === 'function') {
-                                sched.clock.stop();
-                                sched.setStarted(false);
-                                stoppedNatively = true;
-                            } else if (typeof sched.stop === 'function') {
-                                sched.stop();
+                    if (window.strudelMirror) {
+                        try {
+                            if (window.strudelMirror.repl) {
+                                if (window.strudelMirror.repl.scheduler) {
+                                    window.strudelMirror.repl.scheduler.stop();
+                                    stoppedNatively = true;
+                                }
+                                if (typeof window.strudelMirror.repl.stop === 'function') {
+                                    window.strudelMirror.repl.stop();
+                                    stoppedNatively = true;
+                                }
+                            }
+                            if (typeof window.strudelMirror.stop === 'function') {
+                                window.strudelMirror.stop();
                                 stoppedNatively = true;
                             }
-                        }
-                    }
-
-                    try {
-                        const ed = window.strudelMirror ? window.strudelMirror.editor : null;
-                        if (ed) {
+                        } catch(e) {}
+                        try {
+                            const ed = window.strudelMirror.editor;
                             document.dispatchEvent(new CustomEvent('repl-stop', { detail: { view: ed } }));
                             window.dispatchEvent(new CustomEvent('repl-stop', { detail: { view: ed } }));
-                        }
+                        } catch(e) {}
+                    }
+                    try {
+                        if (typeof window.hush === 'function') window.hush();
+                        if (typeof hush === 'function') hush();
                     } catch(e) {}
 
                     if (!stoppedNatively) {
