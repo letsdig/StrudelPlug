@@ -149,6 +149,9 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
     // =========================================================================
     function tryConnect() {
         if (wsConnected) return;
+        if (typeof window !== "undefined" && window.location && window.location.protocol === "https:") {
+            return;
+        }
 
         const currentPort = PORTS[portIndex % PORTS.length];
         try {
@@ -537,21 +540,7 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
             return;
         }
 
-        // 2. FALLBACK ONLY: Direct Native IPC (Used ONLY when WebSocket is not connected)
-        // Detect silence so we do NOT flood WebKit IPC with 375 base64 messages/sec when playing pure MIDI
-        const f32 = new Float32Array(pcmBuffer);
-        let hasSignal = false;
-        for (let i = 0; i < f32.length; i++) {
-            if (Math.abs(f32[i]) > 0.00002) {
-                hasSignal = true;
-                break;
-            }
-        }
-
-        if (!hasSignal) {
-            return; // Silence: preserve native IPC bandwidth for MIDI and transport commands!
-        }
-
+        // 2. Direct Native IPC
         const u8 = new Uint8Array(pcmBuffer);
         let bin = "";
         const chunkSz = 1024;

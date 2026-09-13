@@ -168,7 +168,6 @@ void StrudelPlugAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
                 {
                     stoppedThisBlock = true;
                     bridgeServer.sendAllNotesOff();
-                    bridgeServer.flushAudioBuffer();
                 }
             }
             else if (isPlaying && dawSyncEnabled.load())
