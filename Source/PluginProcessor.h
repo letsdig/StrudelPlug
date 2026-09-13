@@ -89,7 +89,8 @@ public:
     StrudelBrowserComponent* getOrCreateBrowser();
     StrudelBrowserComponent* getBrowser() const noexcept { return browser.get(); }
     void createPersistentBrowser();
-    void triggerBrowserPlayback (bool isPlaying);
+    void triggerBrowserPlayback (bool isPlaying, double bpm = 120.0, double ppq = 0.0, int sigNum = 4, int sigDen = 4);
+    void triggerBrowserSeek (double ppq, double bpm = 120.0, int sigNum = 4, int sigDen = 4);
     void triggerBrowserTempo (double bpm);
 
     // Called by the editor's destructor instead of just detaching the browser.
@@ -117,6 +118,7 @@ private:
     std::atomic<bool> dawSyncEnabled { true };
     std::atomic<bool> wasDawPlaying { false };
     std::atomic<double> lastDawBpm { 120.0 };
+    std::atomic<double> lastPpqPosition { 0.0 };
     std::atomic<int> preferredSampleRate { 0 };
 
     juce::String code;

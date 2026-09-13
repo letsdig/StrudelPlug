@@ -97,6 +97,7 @@ void StrudelPlugAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
     juce::ignoreUnused (samplesPerBlock);
     bridgeServer.setDawSampleRate ((int) sampleRate);
     bridgeServer.startServer();
+    setLatencySamples (bridgeServer.getJitterCushionSamples());
 }
 
 void StrudelPlugAudioProcessor::releaseResources()
@@ -137,32 +138,48 @@ void StrudelPlugAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
     auto totalNumOutputChannels = getTotalNumOutputChannels();
     const int numSamples = buffer.getNumSamples();
 
-    // 0. DAW Transport Synchronization (Play / Stop / BPM Sync)
+    // 0. DAW Transport Synchronization (Play / Stop / BPM / Beat Sync)
     if (auto* playHead = getPlayHead())
     {
         if (auto pos = playHead->getPosition())
         {
             const bool isPlaying = pos->getIsPlaying();
+            const auto bpmOpt = pos->getBpm();
+            const double currentBpm = bpmOpt.hasValue() ? *bpmOpt : 120.0;
+            const auto ppqOpt = pos->getPpqPosition();
+            const double currentPpq = ppqOpt.hasValue() ? *ppqOpt : 0.0;
+            const auto timeSig = pos->getTimeSignature();
+            const int sigNum = timeSig.hasValue() ? timeSig->numerator : 4;
+            const int sigDen = timeSig.hasValue() ? timeSig->denominator : 4;
+
             if (isPlaying != wasDawPlaying.load())
             {
                 wasDawPlaying.store (isPlaying);
                 if (dawSyncEnabled.load())
                 {
-                    triggerBrowserPlayback (isPlaying);
+                    triggerBrowserPlayback (isPlaying, currentBpm, currentPpq, sigNum, sigDen);
+                    bridgeServer.flushAudioBuffer();
+                }
+            }
+            else if (isPlaying && dawSyncEnabled.load())
+            {
+                // Detect transport seek or loop wrap while playing
+                const double expectedPpq = lastPpqPosition.load() + ((double) numSamples / getSampleRate()) * (currentBpm / 60.0);
+                if (std::abs (currentPpq - expectedPpq) > 0.25)
+                {
+                    triggerBrowserSeek (currentPpq, currentBpm, sigNum, sigDen);
                     bridgeServer.flushAudioBuffer();
                 }
             }
 
-            if (const auto bpmOpt = pos->getBpm())
+            lastPpqPosition.store (currentPpq);
+
+            if (std::abs (currentBpm - lastDawBpm.load()) > 0.05)
             {
-                const double currentBpm = *bpmOpt;
-                if (std::abs (currentBpm - lastDawBpm.load()) > 0.1)
+                lastDawBpm.store (currentBpm);
+                if (dawSyncEnabled.load())
                 {
-                    lastDawBpm.store (currentBpm);
-                    if (dawSyncEnabled.load())
-                    {
-                        triggerBrowserTempo (currentBpm);
-                    }
+                    triggerBrowserTempo (currentBpm);
                 }
             }
         }
@@ -228,7 +245,7 @@ void StrudelPlugAudioProcessor::createPersistentBrowser()
     options = options.withNativeIntegrationEnabled (true)
                      .withKeepPageLoadedWhenBrowserIsHidden()
                      .withUserAgent ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
-                     .withUserScript (WebBridge::getInjectionScript (bridgeServer.getPort(), getEffectiveSampleRate()))
+                     .withUserScript (WebBridge::getInjectionScript (bridgeServer.getPort(), getEffectiveSampleRate(), 256, lastDawBpm.load()))
                      .withEventListener ("dawAudioData", [this] (const juce::var& data)
                      {
                          if (auto* obj = data.getDynamicObject())
@@ -263,11 +280,13 @@ void StrudelPlugAudioProcessor::createPersistentBrowser()
             if (browser)
             {
                 browser->evaluateJavascript (
-                    WebBridge::getInjectionScript (bridgeServer.getPort(), getEffectiveSampleRate()));
+                    WebBridge::getInjectionScript (bridgeServer.getPort(), getEffectiveSampleRate(), 256, lastDawBpm.load()));
+
+                triggerBrowserTempo (lastDawBpm.load());
 
                 if (isDawSyncEnabled() && isDawPlaying())
                 {
-                    triggerBrowserPlayback (true);
+                    triggerBrowserPlayback (true, lastDawBpm.load(), lastPpqPosition.load());
                 }
             }
         });
@@ -310,23 +329,25 @@ void StrudelPlugAudioProcessor::detachBrowserFromHiddenHost()
     }
 }
 
-void StrudelPlugAudioProcessor::triggerBrowserPlayback (bool isPlaying)
+void StrudelPlugAudioProcessor::triggerBrowserPlayback (bool isPlaying, double bpm, double ppq, int sigNum, int sigDen)
 {
-    juce::MessageManager::callAsync ([this, isPlaying]()
+    juce::MessageManager::callAsync ([this, isPlaying, bpm, ppq, sigNum, sigDen]()
     {
         if (browser)
         {
             if (isPlaying)
             {
-                browser->evaluateJavascript (
+                juce::String js = juce::String::formatted (
                     "(function() {"
                     "    if (window.__JUCE_BRIDGE__ && typeof window.__JUCE_BRIDGE__.setTransportPlay === 'function') {"
-                    "        window.__JUCE_BRIDGE__.setTransportPlay(true);"
+                    "        window.__JUCE_BRIDGE__.setTransportPlay(true, { bpm: %.2f, ppq: %.4f, sigNum: %d, sigDen: %d });"
                     "    } else if (window.strudelMirror && typeof window.strudelMirror.evaluate === 'function') {"
                     "        window.strudelMirror.evaluate();"
                     "    }"
-                    "})();"
+                    "})();",
+                    bpm, ppq, sigNum, sigDen
                 );
+                browser->evaluateJavascript (js);
             }
             else
             {
@@ -349,6 +370,23 @@ void StrudelPlugAudioProcessor::triggerBrowserPlayback (bool isPlaying)
                     "})();"
                 );
             }
+        }
+    });
+}
+
+void StrudelPlugAudioProcessor::triggerBrowserSeek (double ppq, double bpm, int sigNum, int sigDen)
+{
+    juce::MessageManager::callAsync ([this, ppq, bpm, sigNum, sigDen]()
+    {
+        if (browser)
+        {
+            juce::String js = juce::String::formatted (
+                "if (window.__JUCE_BRIDGE__ && typeof window.__JUCE_BRIDGE__.alignTransport === 'function') {"
+                "    window.__JUCE_BRIDGE__.alignTransport(%.4f, %.2f, %d, %d);"
+                "}",
+                ppq, bpm, sigNum, sigDen
+            );
+            browser->evaluateJavascript (js);
         }
     });
 }

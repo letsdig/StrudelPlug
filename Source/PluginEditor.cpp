@@ -158,6 +158,7 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
         else if (id == 7) smp = 4096;
 
         audioProcessor.getBridgeServer().setJitterCushionSamples (smp);
+        audioProcessor.setLatencySamples (smp);
     };
     addAndMakeVisible (cushionComboBox);
 

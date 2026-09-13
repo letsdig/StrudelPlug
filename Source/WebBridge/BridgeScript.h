@@ -5,7 +5,7 @@
 namespace WebBridge
 {
 
-inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRate = 48000, int bufferSize = 256)
+inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRate = 48000, int bufferSize = 256, double initialBpm = 120.0)
 {
     return juce::String(R"JS(
 (function() {
@@ -98,8 +98,24 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
         muteSystemAudio: true,
         bufferSize: %BUFFER_SIZE%,
         targetSampleRate: %SAMPLE_RATE%,
-        transportPlaying: true
+        transportPlaying: false,
+        dawBpm: %INITIAL_BPM%
     };
+
+    if (typeof window.setcpm === "undefined") {
+        window.setcpm = function(cpm) {
+            if (window.strudelMirror && window.strudelMirror.repl) {
+                window.strudelMirror.repl.setCps(cpm / 60.0);
+            }
+        };
+    }
+    if (typeof window.setcps === "undefined") {
+        window.setcps = function(cps) {
+            if (window.strudelMirror && window.strudelMirror.repl) {
+                window.strudelMirror.repl.setCps(cps);
+            }
+        };
+    }
 
     // =========================================================================
     // 0. DIRECT NATIVE JUCE IN-MEMORY IPC (100% immune to CORS / Mixed Content)
@@ -793,23 +809,110 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                 console.warn("[JUCE-WebBridge] dispatchMidiFromOsc error:", e);
             }
         },
-        setTransportPlay: function(play) {
+        setBpm: function(bpm) {
+            try {
+                if (typeof bpm !== 'number' || isNaN(bpm) || bpm <= 0) return;
+                CONFIG.dawBpm = bpm;
+                const cps = bpm / 240.0;
+                const cpm = bpm / 4.0;
+
+                if (window.strudelMirror && window.strudelMirror.repl) {
+                    if (typeof window.strudelMirror.repl.setCps === 'function') {
+                        window.strudelMirror.repl.setCps(cps);
+                    }
+                    if (window.strudelMirror.repl.scheduler && typeof window.strudelMirror.repl.scheduler.setCps === 'function') {
+                        window.strudelMirror.repl.scheduler.setCps(cps);
+                    }
+                }
+                if (typeof window.setcpm === 'function') {
+                    try { window.setcpm(cpm); } catch(e) {}
+                }
+                if (typeof window.setcps === 'function') {
+                    try { window.setcps(cps); } catch(e) {}
+                }
+            } catch(e) {
+                console.warn("[JUCE-WebBridge] setBpm error:", e);
+            }
+        },
+        alignTransport: function(ppq, bpm, sigNum, sigDen) {
+            try {
+                const bpc = (typeof sigNum === 'number' && sigNum > 0) ? sigNum : 4;
+                const targetBpm = (typeof bpm === 'number' && bpm > 0) ? bpm : (CONFIG.dawBpm || 120.0);
+                const targetCps = targetBpm / (bpc * 60.0);
+                const cycle = (typeof ppq === 'number' ? ppq : 0.0) / bpc;
+
+                if (window.strudelMirror && window.strudelMirror.repl && window.strudelMirror.repl.scheduler) {
+                    const sched = window.strudelMirror.repl.scheduler;
+                    sched.lastEnd = cycle;
+                    sched.lastBegin = cycle;
+                    sched.num_cycles_at_cps_change = cycle;
+                    sched.num_ticks_since_cps_change = 0;
+                    sched.setCps(targetCps);
+                }
+            } catch(e) {
+                console.warn("[JUCE-WebBridge] alignTransport error:", e);
+            }
+        },
+        setTransportPlay: function(play, transportInfo) {
             try {
                 if (play) {
                     CONFIG.transportPlaying = true;
                     resumeAllContexts();
+
+                    const info = transportInfo || {};
+                    const targetBpm = (typeof info.bpm === 'number' && info.bpm > 0) ? info.bpm : (CONFIG.dawBpm || 120.0);
+                    const bpc = (typeof info.sigNum === 'number' && info.sigNum > 0) ? info.sigNum : 4;
+                    const targetCps = targetBpm / (bpc * 60.0);
+                    const startCycle = (typeof info.ppq === 'number' ? info.ppq : 0.0) / bpc;
+                    CONFIG.dawBpm = targetBpm;
+
                     if (window.strudelMirror) {
                         try {
+                            const repl = window.strudelMirror.repl;
+                            if (repl && repl.scheduler) {
+                                const sched = repl.scheduler;
+                                sched.setCps(targetCps);
+                                sched.lastEnd = startCycle;
+                                sched.lastBegin = startCycle;
+                                sched.num_cycles_at_cps_change = startCycle;
+                                sched.num_ticks_since_cps_change = 0;
+
+                                if (!sched.started) {
+                                    if (sched.pattern) {
+                                        sched.start();
+                                        return;
+                                    }
+                                } else {
+                                    return;
+                                }
+                            }
                             if (typeof window.strudelMirror.evaluate === 'function') {
                                 window.strudelMirror.evaluate();
+                                if (repl && repl.scheduler) {
+                                    repl.scheduler.setCps(targetCps);
+                                    repl.scheduler.lastEnd = startCycle;
+                                    repl.scheduler.lastBegin = startCycle;
+                                    repl.scheduler.num_cycles_at_cps_change = startCycle;
+                                    repl.scheduler.num_ticks_since_cps_change = 0;
+                                }
                                 return;
                             }
-                            if (window.strudelMirror.repl && typeof window.strudelMirror.repl.evaluate === 'function') {
-                                window.strudelMirror.repl.evaluate(window.strudelMirror.code);
+                            if (repl && typeof repl.evaluate === 'function') {
+                                repl.evaluate(window.strudelMirror.code);
+                                if (repl.scheduler) {
+                                    repl.scheduler.setCps(targetCps);
+                                    repl.scheduler.lastEnd = startCycle;
+                                    repl.scheduler.lastBegin = startCycle;
+                                    repl.scheduler.num_cycles_at_cps_change = startCycle;
+                                    repl.scheduler.num_ticks_since_cps_change = 0;
+                                }
                                 return;
                             }
-                        } catch(e) {}
+                        } catch(e) {
+                            console.warn("[JUCE-WebBridge] strudelMirror start error:", e);
+                        }
                     }
+
                     const playBtns = document.querySelectorAll('button[title="play"], button[title*="play" i], button[aria-label*="play" i]');
                     playBtns.forEach(btn => btn.click());
                 } else {
@@ -847,12 +950,6 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                         if (typeof hush === 'function') hush();
                     } catch(e) {}
 
-                    // IMPORTANT: only fall back to clicking a DOM "stop" button when the
-                    // native scheduler API was not available. Some Strudel UI builds use a
-                    // single toggle button for play/stop; clicking it *after* the transport
-                    // has already been stopped natively can flip it back to "play" and
-                    // restart audio right after the DAW stops (the bug where playback
-                    // seems to click "stop" and immediately keep going).
                     if (!stoppedNatively) {
                         try {
                             const stopBtns = document.querySelectorAll('button[title="stop"], button[title*="stop" i], button[aria-label*="stop" i]');
@@ -864,13 +961,6 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
             } catch(e) {
                 console.warn("[JUCE-WebBridge] setTransportPlay error:", e);
             }
-        },
-        setBpm: function(bpm) {
-            try {
-                if (typeof window.setcps === 'function') {
-                    window.setcps(bpm / 240.0);
-                }
-            } catch(e) {}
         },
         sendTestMidi: (note = 60, vel = 100) => {
             dispatchMidiFromDaw(0x90, note, vel);
@@ -884,7 +974,8 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
 )JS")
         .replace("%PORT%", juce::String(bridgePort))
         .replace("%SAMPLE_RATE%", juce::String(targetSampleRate))
-        .replace("%BUFFER_SIZE%", juce::String(bufferSize));
+        .replace("%BUFFER_SIZE%", juce::String(bufferSize))
+        .replace("%INITIAL_BPM%", juce::String(initialBpm, 2));
 }
 
 } // namespace WebBridge
