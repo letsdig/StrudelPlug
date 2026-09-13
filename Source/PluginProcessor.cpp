@@ -253,7 +253,7 @@ void StrudelPlugAudioProcessor::createPersistentBrowser()
     options = options.withNativeIntegrationEnabled (true)
                      .withKeepPageLoadedWhenBrowserIsHidden()
                      .withUserAgent ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
-                     .withUserScript (WebBridge::getInjectionScript (bridgeServer.getPort(), getEffectiveSampleRate(), 256, lastDawBpm.load()))
+                     .withUserScript (WebBridge::getInjectionScript (bridgeServer.getPort(), getEffectiveSampleRate(), 512, lastDawBpm.load()))
                      .withEventListener ("dawAudioData", [this] (const juce::var& data)
                      {
                          if (auto* obj = data.getDynamicObject())
@@ -280,6 +280,19 @@ void StrudelPlugAudioProcessor::createPersistentBrowser()
                              int d2 = (int) data[2];
                              bridgeServer.injectMidiFromBrowser (status, d1, d2);
                          }
+                     })
+                     .withEventListener ("saveCode", [this] (const juce::var& data)
+                     {
+                         if (auto* obj = data.getDynamicObject())
+                         {
+                             auto c = obj->getProperty ("code").toString();
+                             if (c.isNotEmpty())
+                                 setCode (c);
+                         }
+                         else if (data.isString())
+                         {
+                             setCode (data.toString());
+                         }
                      });
 
     browser = std::make_unique<StrudelBrowserComponent> (
@@ -295,9 +308,14 @@ void StrudelPlugAudioProcessor::createPersistentBrowser()
             if (browser)
             {
                 browser->evaluateJavascript (
-                    WebBridge::getInjectionScript (bridgeServer.getPort(), getEffectiveSampleRate(), 256, lastDawBpm.load()));
+                    WebBridge::getInjectionScript (bridgeServer.getPort(), getEffectiveSampleRate(), 512, lastDawBpm.load()));
 
                 triggerBrowserTempo (lastDawBpm.load());
+
+                if (code.isNotEmpty())
+                {
+                    restoreBrowserCode (code);
+                }
 
                 if (isDawSyncEnabled() && isDawPlaying())
                 {
@@ -310,6 +328,23 @@ void StrudelPlugAudioProcessor::createPersistentBrowser()
     if (target.trim().isEmpty())
         target = "https://strudel.cc/";
     browser->goToURL (target);
+}
+
+void StrudelPlugAudioProcessor::restoreBrowserCode (const juce::String& codeToRestore)
+{
+    if (codeToRestore.isEmpty())
+        return;
+
+    juce::MessageManager::callAsync ([this, codeToRestore]()
+    {
+        if (browser)
+        {
+            juce::String js = "if (window.__JUCE_BRIDGE__ && typeof window.__JUCE_BRIDGE__.restoreCode === 'function') {"
+                              "    window.__JUCE_BRIDGE__.restoreCode(" + juce::JSON::toString (codeToRestore) + ");"
+                              "}";
+            browser->evaluateJavascript (js);
+        }
+    });
 }
 
 void StrudelPlugAudioProcessor::triggerBrowserPlayback (bool isPlaying, double bpm, double ppq, int sigNum, int sigDen)
@@ -545,6 +580,8 @@ void StrudelPlugAudioProcessor::getStateInformation (juce::MemoryBlock& destData
     stream.writeString (sessionId);
     stream.writeBool (dawSyncEnabled.load());
     stream.writeInt (preferredSampleRate.load());
+    stream.writeInt (bridgeServer.getJitterCushionSamples());
+    stream.writeFloat (bridgeServer.getOutputGain());
 }
 
 void StrudelPlugAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -560,6 +597,21 @@ void StrudelPlugAudioProcessor::setStateInformation (const void* data, int sizeI
         dawSyncEnabled.store (stream.readBool());
     if (! stream.isExhausted())
         preferredSampleRate.store (stream.readInt());
+    if (! stream.isExhausted())
+    {
+        int cushion = stream.readInt();
+        bridgeServer.setJitterCushionSamples (cushion);
+        setLatencySamples (cushion);
+    }
+    if (! stream.isExhausted())
+    {
+        bridgeServer.setOutputGain (stream.readFloat());
+    }
+
+    if (code.isNotEmpty())
+    {
+        restoreBrowserCode (code);
+    }
 }
 
 //==============================================================================

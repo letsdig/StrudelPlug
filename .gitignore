@@ -14,3 +14,5 @@ bin/
 .DS_Store
 *.swp
 *~
+*.tar.gz
+*.zip

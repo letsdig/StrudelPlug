@@ -539,20 +539,54 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
 
     const CAPTURE_WORKLET_SRC = [
         "class JuceCaptureProcessor extends AudioWorkletProcessor {",
+        "  constructor() {",
+        "    super();",
+        "    this.batchTarget = 512;",
+        "    this.buf = new Float32Array(this.batchTarget * 2);",
+        "    this.bufIdx = 0;",
+        "    this.silenceBlocks = 0;",
+        "    this.isSilent = false;",
+        "    this.maxSilenceBlocks = 188;", // ~500ms hangover at 128-frame blocks (48kHz)
+        "  }",
         "  process(inputs, outputs) {",
         "    const input = inputs[0];",
         "    const output = outputs[0];",
-        "    const inL = (input && input[0]) ? input[0] : new Float32Array(128);",
+        "    const inL = (input && input[0]) ? input[0] : null;",
         "    const inR = (input && input.length > 1 && input[1]) ? input[1] : inL;",
-        "    const len = inL.length;",
-        "    if (output && output[0]) output[0].set(inL);",
-        "    if (output && output.length > 1 && output[1]) output[1].set(inR);",
-        "    const packet = new Float32Array(len * 2);",
-        "    for (let i = 0; i < len; i++) {",
-        "      packet[i * 2] = inL[i];",
-        "      packet[i * 2 + 1] = inR[i];",
+        "    const len = inL ? inL.length : 128;",
+        "    if (output && output[0] && inL) output[0].set(inL);",
+        "    if (output && output.length > 1 && output[1] && inR) output[1].set(inR);",
+        "    let hasSignal = false;",
+        "    if (inL) {",
+        "      for (let i = 0; i < len; i++) {",
+        "        if (Math.abs(inL[i]) > 0.00001 || (inR && Math.abs(inR[i]) > 0.00001)) {",
+        "          hasSignal = true;",
+        "          break;",
+        "        }",
+        "      }",
         "    }",
-        "    this.port.postMessage({ sr: sampleRate, len: len, pcm: packet.buffer }, [packet.buffer]);",
+        "    if (hasSignal) {",
+        "      this.silenceBlocks = 0;",
+        "      this.isSilent = false;",
+        "    } else {",
+        "      this.silenceBlocks++;",
+        "      if (this.silenceBlocks > this.maxSilenceBlocks) {",
+        "        this.isSilent = true;",
+        "      }",
+        "    }",
+        "    if (this.isSilent && this.bufIdx === 0) {",
+        "      return true;",
+        "    }",
+        "    for (let i = 0; i < len; i++) {",
+        "      this.buf[this.bufIdx * 2] = inL ? inL[i] : 0;",
+        "      this.buf[this.bufIdx * 2 + 1] = inR ? inR[i] : 0;",
+        "      this.bufIdx++;",
+        "      if (this.bufIdx >= this.batchTarget) {",
+        "        const pcmCopy = this.buf.slice(0, this.batchTarget * 2);",
+        "        this.port.postMessage({ sr: sampleRate, len: this.batchTarget, pcm: pcmCopy.buffer }, [pcmCopy.buffer]);",
+        "        this.bufIdx = 0;",
+        "      }",
+        "    }",
         "    return true;",
         "  }",
         "}",
@@ -585,12 +619,12 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
             return;
         }
 
-        // 2. Direct Native IPC
+        // 2. Direct Native IPC: fast single-chunk conversion without slicing allocations
         const u8 = new Uint8Array(pcmBuffer);
         let bin = "";
-        const chunkSz = 1024;
+        const chunkSz = 8192;
         for (let i = 0; i < u8.length; i += chunkSz) {
-            bin += String.fromCharCode.apply(null, u8.subarray(i, i + chunkSz));
+            bin += String.fromCharCode.apply(null, u8.subarray(i, Math.min(i + chunkSz, u8.length)));
         }
         const b64 = btoa(bin);
 
@@ -852,10 +886,139 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
         window.addEventListener("load", scanAndHook);
     }
 
+    // =========================================================================
+    // 6. STRUDEL CODE STATE SYNC & RESTORATION (DAW Project Persistence)
+    // =========================================================================
+    function getStrudelCode() {
+        try {
+            if (window.strudelMirror) {
+                if (window.strudelMirror.editor && window.strudelMirror.editor.state && window.strudelMirror.editor.state.doc) {
+                    return window.strudelMirror.editor.state.doc.toString();
+                }
+                if (typeof window.strudelMirror.getCode === 'function') {
+                    return window.strudelMirror.getCode();
+                }
+                if (typeof window.strudelMirror.code === 'string' && window.strudelMirror.code.length > 0) {
+                    return window.strudelMirror.code;
+                }
+                if (window.strudelMirror.repl && typeof window.strudelMirror.repl.code === 'string') {
+                    return window.strudelMirror.repl.code;
+                }
+            }
+            if (window.strudelOffline && typeof window.strudelOffline.getCode === 'function') {
+                return window.strudelOffline.getCode();
+            }
+            const cmContent = document.querySelector('.cm-content');
+            if (cmContent) {
+                return cmContent.innerText || cmContent.textContent || "";
+            }
+            const ta = document.querySelector('textarea#code, textarea');
+            if (ta) {
+                return ta.value;
+            }
+        } catch (e) {
+            console.warn("[JUCE-WebBridge] Error getting Strudel code:", e);
+        }
+        return "";
+    }
+
+    function setStrudelCode(newCode) {
+        try {
+            if (!newCode || typeof newCode !== 'string') return false;
+            let applied = false;
+            if (window.strudelMirror) {
+                if (window.strudelMirror.editor && window.strudelMirror.editor.dispatch && window.strudelMirror.editor.state) {
+                    const ed = window.strudelMirror.editor;
+                    ed.dispatch({
+                        changes: { from: 0, to: ed.state.doc.length, insert: newCode }
+                    });
+                    window.strudelMirror.code = newCode;
+                    applied = true;
+                } else if (typeof window.strudelMirror.setCode === 'function') {
+                    window.strudelMirror.setCode(newCode);
+                    applied = true;
+                } else {
+                    window.strudelMirror.code = newCode;
+                }
+            }
+            const ta = document.querySelector('textarea#code, textarea');
+            if (ta) {
+                ta.value = newCode;
+                ta.dispatchEvent(new Event('input', { bubbles: true }));
+                applied = true;
+            }
+            const cmContent = document.querySelector('.cm-content');
+            if (cmContent && !applied) {
+                cmContent.innerText = newCode;
+                cmContent.dispatchEvent(new Event('input', { bubbles: true }));
+                applied = true;
+            }
+            return applied;
+        } catch (e) {
+            console.warn("[JUCE-WebBridge] Error setting Strudel code:", e);
+        }
+        return false;
+    }
+
+    let lastSyncedCode = "";
+    function syncCodeToDaw() {
+        const code = getStrudelCode();
+        if (code && code.trim().length > 0 && code !== lastSyncedCode) {
+            lastSyncedCode = code;
+            sendNativeJuceEvent("saveCode", { code: code });
+        }
+    }
+
+    let debounceTimer = null;
+    function onUserEditedCode() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(syncCodeToDaw, 400);
+    }
+    if (typeof window !== "undefined") {
+        window.addEventListener("input", onUserEditedCode, { passive: true });
+        window.addEventListener("keyup", onUserEditedCode, { passive: true });
+        setInterval(syncCodeToDaw, 2000);
+    }
+
     // Global controller
     window.__JUCE_BRIDGE__ = {
         config: CONFIG,
         getConnected: () => true,
+        restoreCode: function(codeToRestore) {
+            if (!codeToRestore || typeof codeToRestore !== 'string' || codeToRestore.trim().length === 0)
+                return;
+
+            let attempts = 0;
+            const maxAttempts = 30; // try every 200ms for 6s
+            const tryApply = () => {
+                attempts++;
+                const applied = setStrudelCode(codeToRestore);
+                if (applied) {
+                    console.log("[JUCE-WebBridge] Strudel code successfully restored from DAW state!");
+                    lastSyncedCode = codeToRestore;
+                    if (CONFIG.transportPlaying) {
+                        try {
+                            if (window.strudelMirror && typeof window.strudelMirror.evaluate === 'function') {
+                                window.strudelMirror.evaluate();
+                            } else if (window.strudelMirror && window.strudelMirror.repl && typeof window.strudelMirror.repl.evaluate === 'function') {
+                                window.strudelMirror.repl.evaluate(codeToRestore);
+                            }
+                        } catch(e) {}
+                    }
+                    return;
+                }
+                if (attempts < maxAttempts) {
+                    setTimeout(tryApply, 200);
+                }
+            };
+            tryApply();
+        },
+        getCode: function() {
+            return getStrudelCode();
+        },
+        syncCode: function() {
+            syncCodeToDaw();
+        },
         setMuteSystemAudio: (mute) => {
             CONFIG.muteSystemAudio = !!mute;
             updateMuteState();
@@ -951,6 +1114,7 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                 if (play) {
                     CONFIG.transportPlaying = true;
                     resumeAllContexts();
+                    syncCodeToDaw();
 
                     const info = transportInfo || {};
                     const targetBpm = (typeof info.bpm === 'number' && info.bpm > 0) ? info.bpm : (CONFIG.dawBpm || 120.0);

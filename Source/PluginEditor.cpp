@@ -182,7 +182,9 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     gainSlider.setSliderStyle (juce::Slider::LinearHorizontal);
     gainSlider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 50, 18);
     gainSlider.setRange (-24.0, 6.0, 0.5);
-    gainSlider.setValue (0.0);
+    const float currentGain = audioProcessor.getBridgeServer().getOutputGain();
+    const double currentDb = currentGain > 0.0001f ? (double) juce::Decibels::gainToDecibels (currentGain) : -24.0;
+    gainSlider.setValue (currentDb, juce::dontSendNotification);
     gainSlider.setTextValueSuffix (" dB");
     gainSlider.setTooltip ("Plugin output gain trim");
     gainSlider.onValueChange = [this]

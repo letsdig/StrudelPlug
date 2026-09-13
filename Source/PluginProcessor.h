@@ -92,6 +92,7 @@ public:
     void triggerBrowserPlayback (bool isPlaying, double bpm = 120.0, double ppq = 0.0, int sigNum = 4, int sigDen = 4);
     void triggerBrowserSeek (double ppq, double bpm = 120.0, int sigNum = 4, int sigDen = 4);
     void triggerBrowserTempo (double bpm);
+    void restoreBrowserCode (const juce::String& codeToRestore);
 
 private:
     //==============================================================================

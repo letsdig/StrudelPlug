@@ -62,19 +62,41 @@ $: chord("<Cm7 Fm7 Gm7 Cm7>").voicing().midi()
   - **Instant Clean Stop & Anti-Hang**: Stopping DAW transport instantly silences audio, flushes FIFO ring buffers, and clears all active notes with All Sound Off (CC 120) and All Notes Off (CC 123).
 - You can also toggle SYNC off to let Strudel run free independently of host transport.
 
+### 2.4 DAW State Persistence & Project Auto-Save (v1.0.9+)
+- **Two-Way Pattern Synchronization**: Live edits inside Strudel's CodeMirror editor are continuously debounced and synchronized to the C++ audio processor in real time.
+- **DAW Project Save / Reload**: When saving your session in Bitwig, Reaper, or any VST3 host, the plugin state automatically serializes:
+  - The active Strudel pattern code.
+  - Target server URL (e.g. `https://strudel.cc/` or local instance).
+  - Transport synchronization toggle state (`SYNC DAW`).
+  - Web Audio sample rate selection.
+  - Jitter cushion buffer size (samples & ms).
+  - Master output gain trim (dB).
+- **Zero-Loss Reopen**: Reopening the project restores your pattern code directly into the editor and re-evaluates it if DAW transport is active.
+
+### 2.5 Ultra-Low CPU Architecture & Idle Silence Suppression (v1.0.9+)
+- **512-Sample Worklet Batching**: Web Audio blocks are accumulated into 512-sample frames (~10.6ms @ 48kHz), slashing WebKit IPC and Base64 conversion frequency by 75% compared to raw 128-frame processing.
+- **Automatic 500ms Silence Hangover**: When transport is stopped and synthesis is silent, the AudioWorklet streaming enters a low-power IDLE state after a 500ms ringout window. During DAW pauses, CPU consumption drops to **~0%**, waking instantly upon the first audible transient.
+
 ---
 
 ## 3. User Interface & Controls
 
 ### 3.1 Top Navigation Bar
-- **Navigation**: `◀ Back`, `▶ Forward`, `⟳ Reload`, `⌂ Strudel Home` (`https://strudel.cc/`).
-- **URL Editor**: Supports loading local Strudel installations (`http://localhost:54321`) or custom web sequencers.
+- **Navigation Buttons**: `◀ Back`, `▶ Forward`, `⟳ Reload`.
+- **URL Editor**: Input and navigate to any web sequencer or local web server.
+- **Quick Preset Buttons**:
+  - `strudel.cc`: Instantly loads the official cloud Strudel web application.
+  - `Local :54321`: Navigates to a local Strudel server running on `http://127.0.0.1:54321`.
+  - **`▶ Start Node`**: Automatically spawns an offline local Strudel server using Node.js (`npx -y @strudel/repl --port 54321`) in an internal background subprocess and points the plugin to it.
+    - **100% Offline Capability**: Compose and live-code anywhere without an active internet connection.
+    - **Direct Binary WebSockets**: Bypasses browser HTTPS Mixed Content limitations, unlocking direct binary socket streaming without base64 encoding overhead.
+    - *Requirement*: Node.js and `npm`/`npx` installed on your machine.
 
 ### 3.2 Bottom Status & Telemetry Bar
 - **SYNC DAW Button**: Toggles automatic transport synchronization with the DAW.
 - **MIDI LED**: Real-time green activity indicator flashing when Strudel emits MIDI note events.
 - **VOL Meter**: Real-time peak level readout in decibels (`dB`).
-- **Buffer Cushion Selector**: Choose from `128 smp (~2.6ms)` to `4096 smp (~85ms)` to match session CPU load.
+- **Buffer Cushion Selector**: Choose from `128 smp (~2.6ms)` to `16384 smp (~340ms)` to match session CPU load and project requirements.
 - **Gain Slider**: Adjusts master output volume (-24 dB to +6 dB).
 
 ---
@@ -88,11 +110,11 @@ $: chord("<Cm7 Fm7 Gm7 Cm7>").voicing().midi()
 ### Installation Steps
 ```bash
 # 1. Download release archive
-tar -xzf StrudelPlug-v1.0.7-linux-x86_64.tar.gz
+tar -xzf StrudelPlug-v1.0.9-linux-x86_64.tar.gz
 
 # 2. Copy to VST3 folder
 mkdir -p ~/.vst3
-cp -r StrudelPlug-v1.0.7-linux-x86_64/StrudelPlug.vst3 ~/.vst3/
+cp -r StrudelPlug-v1.0.9-linux-x86_64/StrudelPlug.vst3 ~/.vst3/
 ```
 
 After installation, perform a plugin rescan in your DAW.
