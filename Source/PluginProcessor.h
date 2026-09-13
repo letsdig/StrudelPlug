@@ -93,27 +93,11 @@ public:
     void triggerBrowserSeek (double ppq, double bpm = 120.0, int sigNum = 4, int sigDen = 4);
     void triggerBrowserTempo (double bpm);
 
-    // Called by the editor's destructor instead of just detaching the browser.
-    // Reparents the persistent browser into an always-mapped, off-screen host
-    // window (owned by the processor) so its native view/webview never loses
-    // its OS-level peer while no editor is open. This keeps the browser's
-    // Web Audio / JS execution alive instead of being throttled or paused,
-    // which is what previously caused playback to stop when the plugin
-    // editor window was closed.
-    void reattachBrowserToHiddenHost();
-    void detachBrowserFromHiddenHost();
-
 private:
     //==============================================================================
-    struct HiddenBrowserHost : public juce::Component
-    {
-        HiddenBrowserHost() { setOpaque (false); }
-    };
-
     std::atomic<StrudelPlugAudioProcessorEditor*> activeEditor { nullptr };
     WebBridge::WebBridgeServer bridgeServer;
     std::unique_ptr<StrudelBrowserComponent> browser;
-    std::unique_ptr<HiddenBrowserHost> hiddenHost;
 
     std::atomic<bool> dawSyncEnabled { true };
     std::atomic<bool> wasDawPlaying { false };

@@ -273,6 +273,7 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
         constructor() {
             super("juce-daw-midi-out", "DAW MIDI Output (Bitwig / IAC Driver / Track)", "output");
             this.scheduledTimers = new Set();
+            this.activeNotes = new Map();
         }
 
         send(data, timestamp) {
@@ -293,7 +294,18 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                         i += 2;
                     } else if (status >= 0x80) {
                         // 3-byte messages (NoteOn, NoteOff, CC, PitchBend, Aftertouch, Song Position)
-                        sendNativeJuceEvent("dawMidiData", { status: status, d1: bytes[i + 1] || 0, d2: bytes[i + 2] || 0 });
+                        const d1 = bytes[i + 1] || 0;
+                        const d2 = bytes[i + 2] || 0;
+                        const ch = status & 0x0F;
+                        const type = status & 0xF0;
+
+                        if (type === 0x90 && d2 > 0) {
+                            this.activeNotes.set((ch << 8) | d1, true);
+                        } else if (type === 0x80 || (type === 0x90 && d2 === 0)) {
+                            this.activeNotes.delete((ch << 8) | d1);
+                        }
+
+                        sendNativeJuceEvent("dawMidiData", { status: status, d1: d1, d2: d2 });
                         i += 3;
                     } else {
                         // Fallback: send 3 bytes or advance 1
@@ -332,6 +344,33 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                 clearTimeout(t);
             }
             this.scheduledTimers.clear();
+        }
+
+        allNotesOff() {
+            this.clear();
+
+            // 1. Send explicit Note-Off for each active note
+            for (const [key] of this.activeNotes.entries()) {
+                const ch = (key >> 8) & 0x0F;
+                const note = key & 0xFF;
+                sendNativeJuceEvent("dawMidiData", { status: 0x80 | ch, d1: note, d2: 0 });
+                if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+                    const p = new Uint8Array([0x02, 0x80 | ch, note, 0]);
+                    try { ws.send(p.buffer); } catch(e) {}
+                }
+            }
+            this.activeNotes.clear();
+
+            // 2. Send All Sound Off (CC 120) & All Notes Off (CC 123) across all 16 MIDI channels
+            for (let ch = 0; ch < 16; ch++) {
+                sendNativeJuceEvent("dawMidiData", { status: 0xB0 | ch, d1: 120, d2: 0 });
+                sendNativeJuceEvent("dawMidiData", { status: 0xB0 | ch, d1: 123, d2: 0 });
+                if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+                    const p1 = new Uint8Array([0x02, 0xB0 | ch, 120, 0]);
+                    const p2 = new Uint8Array([0x02, 0xB0 | ch, 123, 0]);
+                    try { ws.send(p1.buffer); ws.send(p2.buffer); } catch(e) {}
+                }
+            }
         }
     }
 
@@ -859,52 +898,53 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                     CONFIG.transportPlaying = true;
                     resumeAllContexts();
 
+                    // Restore master tap volume
+                    for (const ctx of allHookedContexts) {
+                        if (ctx && ctx.__juceMasterTap) {
+                            try {
+                                ctx.__juceMasterTap.gain.cancelScheduledValues(ctx.currentTime);
+                                ctx.__juceMasterTap.gain.setValueAtTime(1.0, ctx.currentTime);
+                            } catch(e) {}
+                        }
+                    }
+
                     const info = transportInfo || {};
                     const targetBpm = (typeof info.bpm === 'number' && info.bpm > 0) ? info.bpm : (CONFIG.dawBpm || 120.0);
                     const bpc = (typeof info.sigNum === 'number' && info.sigNum > 0) ? info.sigNum : 4;
                     const targetCps = targetBpm / (bpc * 60.0);
-                    const startCycle = (typeof info.ppq === 'number' ? info.ppq : 0.0) / bpc;
                     CONFIG.dawBpm = targetBpm;
 
                     if (window.strudelMirror) {
                         try {
                             const repl = window.strudelMirror.repl;
-                            if (repl && repl.scheduler) {
-                                const sched = repl.scheduler;
-                                sched.setCps(targetCps);
-                                sched.lastEnd = startCycle;
-                                sched.lastBegin = startCycle;
-                                sched.num_cycles_at_cps_change = startCycle;
-                                sched.num_ticks_since_cps_change = 0;
-
-                                if (!sched.started) {
-                                    if (sched.pattern) {
-                                        sched.start();
-                                        return;
-                                    }
-                                } else {
-                                    return;
-                                }
+                            if (repl && typeof repl.setCps === 'function') {
+                                repl.setCps(targetCps);
                             }
+                            if (repl && repl.scheduler && typeof repl.scheduler.setCps === 'function') {
+                                repl.scheduler.setCps(targetCps);
+                            }
+
+                            const align = () => {
+                                if (CONFIG.transportPlaying && window.__JUCE_BRIDGE__ && typeof window.__JUCE_BRIDGE__.alignTransport === 'function') {
+                                    window.__JUCE_BRIDGE__.alignTransport(info.ppq, targetBpm, bpc);
+                                }
+                            };
+
                             if (typeof window.strudelMirror.evaluate === 'function') {
-                                window.strudelMirror.evaluate();
-                                if (repl && repl.scheduler) {
-                                    repl.scheduler.setCps(targetCps);
-                                    repl.scheduler.lastEnd = startCycle;
-                                    repl.scheduler.lastBegin = startCycle;
-                                    repl.scheduler.num_cycles_at_cps_change = startCycle;
-                                    repl.scheduler.num_ticks_since_cps_change = 0;
+                                const evalRes = window.strudelMirror.evaluate();
+                                if (evalRes && typeof evalRes.then === 'function') {
+                                    evalRes.then(align).catch(e => console.warn("[JUCE-WebBridge] evaluate error:", e));
+                                } else {
+                                    align();
                                 }
                                 return;
                             }
                             if (repl && typeof repl.evaluate === 'function') {
-                                repl.evaluate(window.strudelMirror.code);
-                                if (repl.scheduler) {
-                                    repl.scheduler.setCps(targetCps);
-                                    repl.scheduler.lastEnd = startCycle;
-                                    repl.scheduler.lastBegin = startCycle;
-                                    repl.scheduler.num_cycles_at_cps_change = startCycle;
-                                    repl.scheduler.num_ticks_since_cps_change = 0;
+                                const evalRes = repl.evaluate(window.strudelMirror.code || "");
+                                if (evalRes && typeof evalRes.then === 'function') {
+                                    evalRes.then(align).catch(e => console.warn("[JUCE-WebBridge] repl evaluate error:", e));
+                                } else {
+                                    align();
                                 }
                                 return;
                             }
@@ -918,24 +958,28 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                 } else {
                     CONFIG.transportPlaying = false;
                     try {
-                        virtualMidiOutput.clear();
+                        virtualMidiOutput.allNotesOff();
                         window.postMessage('strudel-stop', '*');
                     } catch(e) {}
+
+                    // Mute master tap instantly to cut off any ringing Web Audio voices
+                    for (const ctx of allHookedContexts) {
+                        if (ctx && ctx.__juceMasterTap) {
+                            try {
+                                ctx.__juceMasterTap.gain.cancelScheduledValues(ctx.currentTime);
+                                ctx.__juceMasterTap.gain.setValueAtTime(0.0, ctx.currentTime);
+                            } catch(e) {}
+                        }
+                    }
+
                     let stoppedNatively = false;
                     if (window.strudelMirror) {
                         try {
-                            if (window.strudelMirror.repl) {
-                                if (window.strudelMirror.repl.scheduler) {
-                                    window.strudelMirror.repl.scheduler.stop();
-                                    stoppedNatively = true;
-                                }
-                                if (typeof window.strudelMirror.repl.stop === 'function') {
-                                    window.strudelMirror.repl.stop();
-                                    stoppedNatively = true;
-                                }
-                            }
                             if (typeof window.strudelMirror.stop === 'function') {
                                 window.strudelMirror.stop();
+                                stoppedNatively = true;
+                            } else if (window.strudelMirror.repl && typeof window.strudelMirror.repl.stop === 'function') {
+                                window.strudelMirror.repl.stop();
                                 stoppedNatively = true;
                             }
                         } catch(e) {}
@@ -945,10 +989,6 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                             window.dispatchEvent(new CustomEvent('repl-stop', { detail: { view: ed } }));
                         } catch(e) {}
                     }
-                    try {
-                        if (typeof window.hush === 'function') window.hush();
-                        if (typeof hush === 'function') hush();
-                    } catch(e) {}
 
                     if (!stoppedNatively) {
                         try {

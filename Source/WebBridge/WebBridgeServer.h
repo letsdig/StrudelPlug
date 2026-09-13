@@ -368,6 +368,22 @@ public:
         }
     }
 
+    void sendAllNotesOff()
+    {
+        std::lock_guard<std::mutex> lock(midiMutex);
+        incomingMidi.clear();
+        for (int ch = 1; ch <= 16; ++ch)
+        {
+            auto sOff = juce::MidiMessage::allSoundOff(ch);
+            auto mOff = juce::MidiMessage::allNotesOff(ch);
+            if (midiOutputDevice != nullptr)
+            {
+                midiOutputDevice->sendMessageNow(sOff);
+                midiOutputDevice->sendMessageNow(mOff);
+            }
+        }
+    }
+
     float getPeakAudioOutLevel()
     {
         return peakAudioOut.exchange(0.0f);

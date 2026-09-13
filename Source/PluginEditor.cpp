@@ -15,7 +15,6 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
     audioProcessor.setEditor (this);
-    audioProcessor.detachBrowserFromHiddenHost();
 
     // Attach persistent browser owned by AudioProcessor (so it keeps playing even when closed!)
     auto* browser = audioProcessor.getOrCreateBrowser();
@@ -293,11 +292,12 @@ StrudelPlugAudioProcessorEditor::~StrudelPlugAudioProcessorEditor()
 {
     stopTimer();
 
-    // Clear active editor first so any pending or subsequent reattach checks know editor is closed
+    // Clear active editor first
     audioProcessor.setEditor (nullptr);
 
-    // Reattach persistent browser into hidden host so playback doesn't halt when window closes
-    audioProcessor.reattachBrowserToHiddenHost();
+    // Cleanly detach the persistent browser from this editor component
+    if (auto* b = audioProcessor.getBrowser())
+        removeChildComponent (b);
 }
 
 void StrudelPlugAudioProcessorEditor::onBrowserUrlChanged (const juce::String& url)
