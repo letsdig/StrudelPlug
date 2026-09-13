@@ -145,13 +145,10 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
     sendNativeJuceEvent("bridgeStatus", { status: "connected", mode: "native" });
 
     // =========================================================================
-    // 1. WEBSOCKET CONNECTION (For External Chrome & Localhost)
+    // 1. WEBSOCKET CONNECTION (For Fast Binary Audio/MIDI Streaming)
     // =========================================================================
     function tryConnect() {
         if (wsConnected) return;
-        if (typeof window !== "undefined" && window.location && window.location.protocol === "https:") {
-            return;
-        }
 
         const currentPort = PORTS[portIndex % PORTS.length];
         try {
@@ -360,17 +357,6 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                 }
             }
             this.activeNotes.clear();
-
-            // 2. Send All Sound Off (CC 120) & All Notes Off (CC 123) across all 16 MIDI channels
-            for (let ch = 0; ch < 16; ch++) {
-                sendNativeJuceEvent("dawMidiData", { status: 0xB0 | ch, d1: 120, d2: 0 });
-                sendNativeJuceEvent("dawMidiData", { status: 0xB0 | ch, d1: 123, d2: 0 });
-                if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
-                    const p1 = new Uint8Array([0x02, 0xB0 | ch, 120, 0]);
-                    const p2 = new Uint8Array([0x02, 0xB0 | ch, 123, 0]);
-                    try { ws.send(p1.buffer); ws.send(p2.buffer); } catch(e) {}
-                }
-            }
         }
     }
 
@@ -548,19 +534,33 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
             try {
                 ws.send(packet.buffer);
             } catch (err) {}
+            return;
         }
-        else {
-            // 2. FALLBACK ONLY: Direct Native IPC (Used ONLY when WebSocket is not yet connected)
-            const u8 = new Uint8Array(pcmBuffer);
-            let bin = "";
-            const chunkSz = 1024;
-            for (let i = 0; i < u8.length; i += chunkSz) {
-                bin += String.fromCharCode.apply(null, u8.subarray(i, i + chunkSz));
-            }
-            const b64 = btoa(bin);
 
-            sendNativeJuceEvent("dawAudioData", { pcm: b64, channels: 2, samples: len, sampleRate: currentRate });
+        // 2. FALLBACK ONLY: Direct Native IPC (Used ONLY when WebSocket is not connected)
+        // Detect silence so we do NOT flood WebKit IPC with 375 base64 messages/sec when playing pure MIDI
+        const f32 = new Float32Array(pcmBuffer);
+        let hasSignal = false;
+        for (let i = 0; i < f32.length; i++) {
+            if (Math.abs(f32[i]) > 0.00002) {
+                hasSignal = true;
+                break;
+            }
         }
+
+        if (!hasSignal) {
+            return; // Silence: preserve native IPC bandwidth for MIDI and transport commands!
+        }
+
+        const u8 = new Uint8Array(pcmBuffer);
+        let bin = "";
+        const chunkSz = 1024;
+        for (let i = 0; i < u8.length; i += chunkSz) {
+            bin += String.fromCharCode.apply(null, u8.subarray(i, i + chunkSz));
+        }
+        const b64 = btoa(bin);
+
+        sendNativeJuceEvent("dawAudioData", { pcm: b64, channels: 2, samples: len, sampleRate: currentRate });
     }
 
     async function hookContext(ctx) {
@@ -882,11 +882,13 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
 
                 if (window.strudelMirror && window.strudelMirror.repl && window.strudelMirror.repl.scheduler) {
                     const sched = window.strudelMirror.repl.scheduler;
-                    sched.lastEnd = cycle;
-                    sched.lastBegin = cycle;
-                    sched.num_cycles_at_cps_change = cycle;
-                    sched.num_ticks_since_cps_change = 0;
-                    sched.setCps(targetCps);
+                    if (sched.started) {
+                        sched.lastEnd = cycle;
+                        sched.lastBegin = cycle;
+                        sched.num_cycles_at_cps_change = cycle;
+                        sched.num_ticks_since_cps_change = 0;
+                        sched.setCps(targetCps);
+                    }
                 }
             } catch(e) {
                 console.warn("[JUCE-WebBridge] alignTransport error:", e);
@@ -894,62 +896,57 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
         },
         setTransportPlay: function(play, transportInfo) {
             try {
+                const info = transportInfo || {};
+                const targetBpm = (typeof info.bpm === 'number' && info.bpm > 0) ? info.bpm : (CONFIG.dawBpm || 120.0);
+                const bpc = (typeof info.sigNum === 'number' && info.sigNum > 0) ? info.sigNum : 4;
+                const targetCps = targetBpm / (bpc * 60.0);
+                const cycle = (typeof info.ppq === 'number' ? info.ppq : 0.0) / bpc;
+                CONFIG.dawBpm = targetBpm;
+
                 if (play) {
                     CONFIG.transportPlaying = true;
                     resumeAllContexts();
 
-                    // Restore master tap volume
-                    for (const ctx of allHookedContexts) {
-                        if (ctx && ctx.__juceMasterTap) {
-                            try {
-                                ctx.__juceMasterTap.gain.cancelScheduledValues(ctx.currentTime);
-                                ctx.__juceMasterTap.gain.setValueAtTime(1.0, ctx.currentTime);
-                            } catch(e) {}
-                        }
-                    }
-
-                    const info = transportInfo || {};
-                    const targetBpm = (typeof info.bpm === 'number' && info.bpm > 0) ? info.bpm : (CONFIG.dawBpm || 120.0);
-                    const bpc = (typeof info.sigNum === 'number' && info.sigNum > 0) ? info.sigNum : 4;
-                    const targetCps = targetBpm / (bpc * 60.0);
-                    CONFIG.dawBpm = targetBpm;
-
                     if (window.strudelMirror) {
-                        try {
-                            const repl = window.strudelMirror.repl;
-                            if (repl && typeof repl.setCps === 'function') {
-                                repl.setCps(targetCps);
-                            }
-                            if (repl && repl.scheduler && typeof repl.scheduler.setCps === 'function') {
-                                repl.scheduler.setCps(targetCps);
+                        const repl = window.strudelMirror.repl;
+                        const sched = repl ? repl.scheduler : null;
+
+                        if (sched && sched.pattern) {
+                            // Pattern is already compiled in memory! Instant synchronous start:
+                            sched.setCps(targetCps);
+                            sched.lastEnd = cycle;
+                            sched.lastBegin = cycle;
+                            sched.num_cycles_at_cps_change = cycle;
+                            sched.num_ticks_since_cps_change = 0;
+
+                            if (sched.clock && typeof sched.clock.start === 'function') {
+                                sched.clock.start();
+                                sched.setStarted(true);
+                            } else if (typeof sched.start === 'function') {
+                                sched.start().then(() => {
+                                    sched.lastEnd = cycle;
+                                    sched.lastBegin = cycle;
+                                    sched.num_cycles_at_cps_change = cycle;
+                                    sched.num_ticks_since_cps_change = 0;
+                                }).catch(() => {});
                             }
 
-                            const align = () => {
-                                if (CONFIG.transportPlaying && window.__JUCE_BRIDGE__ && typeof window.__JUCE_BRIDGE__.alignTransport === 'function') {
-                                    window.__JUCE_BRIDGE__.alignTransport(info.ppq, targetBpm, bpc);
-                                }
-                            };
+                            try {
+                                const ed = window.strudelMirror.editor;
+                                document.dispatchEvent(new CustomEvent('repl-start', { detail: { view: ed } }));
+                                window.dispatchEvent(new CustomEvent('repl-start', { detail: { view: ed } }));
+                            } catch(e) {}
+                            return;
+                        }
 
-                            if (typeof window.strudelMirror.evaluate === 'function') {
-                                const evalRes = window.strudelMirror.evaluate();
-                                if (evalRes && typeof evalRes.then === 'function') {
-                                    evalRes.then(align).catch(e => console.warn("[JUCE-WebBridge] evaluate error:", e));
-                                } else {
-                                    align();
-                                }
-                                return;
-                            }
-                            if (repl && typeof repl.evaluate === 'function') {
-                                const evalRes = repl.evaluate(window.strudelMirror.code || "");
-                                if (evalRes && typeof evalRes.then === 'function') {
-                                    evalRes.then(align).catch(e => console.warn("[JUCE-WebBridge] repl evaluate error:", e));
-                                } else {
-                                    align();
-                                }
-                                return;
-                            }
-                        } catch(e) {
-                            console.warn("[JUCE-WebBridge] strudelMirror start error:", e);
+                        // No pattern yet in scheduler: evaluate editor code
+                        if (typeof window.strudelMirror.evaluate === 'function') {
+                            window.strudelMirror.evaluate();
+                            return;
+                        }
+                        if (repl && typeof repl.evaluate === 'function') {
+                            repl.evaluate(window.strudelMirror.code || "");
+                            return;
                         }
                     }
 
@@ -957,44 +954,42 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                     playBtns.forEach(btn => btn.click());
                 } else {
                     CONFIG.transportPlaying = false;
+
+                    // Immediately silence all virtual MIDI notes
                     try {
                         virtualMidiOutput.allNotesOff();
                         window.postMessage('strudel-stop', '*');
                     } catch(e) {}
 
-                    // Mute master tap instantly to cut off any ringing Web Audio voices
-                    for (const ctx of allHookedContexts) {
-                        if (ctx && ctx.__juceMasterTap) {
-                            try {
-                                ctx.__juceMasterTap.gain.cancelScheduledValues(ctx.currentTime);
-                                ctx.__juceMasterTap.gain.setValueAtTime(0.0, ctx.currentTime);
-                            } catch(e) {}
+                    // Stop the scheduler clock WITHOUT destroying the compiled pattern
+                    let stoppedNatively = false;
+                    if (window.strudelMirror && window.strudelMirror.repl) {
+                        const repl = window.strudelMirror.repl;
+                        const sched = repl.scheduler;
+                        if (sched) {
+                            if (sched.clock && typeof sched.clock.stop === 'function') {
+                                sched.clock.stop();
+                                sched.setStarted(false);
+                                stoppedNatively = true;
+                            } else if (typeof sched.stop === 'function') {
+                                sched.stop();
+                                stoppedNatively = true;
+                            }
                         }
                     }
 
-                    let stoppedNatively = false;
-                    if (window.strudelMirror) {
-                        try {
-                            if (typeof window.strudelMirror.stop === 'function') {
-                                window.strudelMirror.stop();
-                                stoppedNatively = true;
-                            } else if (window.strudelMirror.repl && typeof window.strudelMirror.repl.stop === 'function') {
-                                window.strudelMirror.repl.stop();
-                                stoppedNatively = true;
-                            }
-                        } catch(e) {}
-                        try {
-                            const ed = window.strudelMirror.editor;
+                    try {
+                        const ed = window.strudelMirror ? window.strudelMirror.editor : null;
+                        if (ed) {
                             document.dispatchEvent(new CustomEvent('repl-stop', { detail: { view: ed } }));
                             window.dispatchEvent(new CustomEvent('repl-stop', { detail: { view: ed } }));
-                        } catch(e) {}
-                    }
+                        }
+                    } catch(e) {}
 
                     if (!stoppedNatively) {
                         try {
                             const stopBtns = document.querySelectorAll('button[title="stop"], button[title*="stop" i], button[aria-label*="stop" i]');
                             stopBtns.forEach(btn => btn.click());
-                            document.dispatchEvent(new CustomEvent('stop-repl'));
                         } catch(e) {}
                     }
                 }

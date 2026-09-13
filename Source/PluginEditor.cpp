@@ -198,18 +198,6 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     midiLed.setText ("MIDI", juce::dontSendNotification);
     addAndMakeVisible (midiLed);
 
-    // 6. Reset / Flush Buffer Push Button
-    flushBtn.setTooltip ("Flush FIFO ringbuffer and resynchronize Web Audio stream");
-    flushBtn.onClick = [this]
-    {
-        audioProcessor.getBridgeServer().flushAudioBuffer();
-        if (auto* b = audioProcessor.getBrowser())
-        {
-            b->evaluateJavascript ("if (window.__JUCE_BRIDGE__) window.__JUCE_BRIDGE__.resumeAudio();");
-        }
-    };
-    addAndMakeVisible (flushBtn);
-
     // 7. Real-time Telemetry LCD Display
     telemetryLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff021b1b));
     telemetryLabel.setColour (juce::Label::outlineColourId, juce::Colour (0xff004848));
@@ -227,7 +215,7 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     const auto cyanGlow    = juce::Colour (0xff00f4f4);
     const auto darkTeal    = juce::Colour (0xff082f36);
 
-    for (auto* b : { &backButton, &forwardButton, &reloadButton, &localPort54321Btn, &strudelCcBtn, &flushBtn })
+    for (auto* b : { &backButton, &forwardButton, &reloadButton, &localPort54321Btn, &strudelCcBtn })
     {
         b->setColour (juce::TextButton::buttonColourId, darkBtnCol);
         b->setColour (juce::TextButton::textColourOffId, textCol);
@@ -436,9 +424,6 @@ void StrudelPlugAudioProcessorEditor::resized()
 
     optionsRow.removeFromLeft (6);
     midiLed.setBounds (optionsRow.removeFromLeft (92).reduced (2, 0));
-
-    optionsRow.removeFromLeft (6);
-    flushBtn.setBounds (optionsRow.removeFromLeft (70).reduced (1, 0));
 
     // Remaining right area of options strip is Telemetry LCD
     optionsRow.removeFromLeft (6);
