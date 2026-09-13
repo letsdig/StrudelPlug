@@ -101,7 +101,10 @@ void StrudelPlugAudioProcessor::prepareToPlay (double sampleRate, int samplesPer
 
 void StrudelPlugAudioProcessor::releaseResources()
 {
-    bridgeServer.stopServer();
+    // Do not kill the bridge server here: stopping the server on suspend/sample rate changes
+    // causes port hopping, dropped WebSocket connections, and multi-second thread blocks.
+    // The server is cleanly stopped in ~WebBridgeServer() upon plugin destruction.
+    bridgeServer.flushAudioBuffer();
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -165,13 +168,7 @@ void StrudelPlugAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, 
         }
     }
 
-    // 1. Forward DAW incoming audio to browser (if channel has audio input)
-    if (totalNumInputChannels > 0)
-    {
-        bridgeServer.sendAudioToBrowser (buffer.getArrayOfReadPointers(), totalNumInputChannels, numSamples);
-    }
-
-    // 2. Forward DAW incoming MIDI to WebBridge (so DAW notes can reach browser)
+    // 1. Forward DAW incoming MIDI to WebBridge (so DAW notes can reach browser)
     for (const auto metadata : midiMessages)
     {
         bridgeServer.sendMidiToBrowser (metadata.getMessage());
@@ -288,6 +285,10 @@ void StrudelPlugAudioProcessor::reattachBrowserToHiddenHost()
         if (browser == nullptr)
             return;
 
+        // If an editor is already open or was reopened in the meantime, do NOT reattach to hidden host!
+        if (activeEditor.load() != nullptr)
+            return;
+
         if (hiddenHost == nullptr)
         {
             hiddenHost = std::make_unique<HiddenBrowserHost>();
@@ -299,6 +300,14 @@ void StrudelPlugAudioProcessor::reattachBrowserToHiddenHost()
         hiddenHost->addAndMakeVisible (*browser); // reparents; JUCE detaches any previous parent automatically
         browser->setBounds (hiddenHost->getLocalBounds());
     });
+}
+
+void StrudelPlugAudioProcessor::detachBrowserFromHiddenHost()
+{
+    if (hiddenHost != nullptr)
+    {
+        hiddenHost->setVisible (false);
+    }
 }
 
 void StrudelPlugAudioProcessor::triggerBrowserPlayback (bool isPlaying)

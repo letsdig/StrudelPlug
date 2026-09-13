@@ -15,6 +15,7 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     : AudioProcessorEditor (&p), audioProcessor (p)
 {
     audioProcessor.setEditor (this);
+    audioProcessor.detachBrowserFromHiddenHost();
 
     // Attach persistent browser owned by AudioProcessor (so it keeps playing even when closed!)
     auto* browser = audioProcessor.getOrCreateBrowser();
@@ -291,11 +292,11 @@ StrudelPlugAudioProcessorEditor::~StrudelPlugAudioProcessorEditor()
 {
     stopTimer();
 
-    // Don't just detach the browser (that leaves it with no OS-level peer,
-    // which caused its Web Audio/JS execution to stall or stop). Reattach it
-    // to the processor's always-mapped hidden host so it keeps running.
-    audioProcessor.reattachBrowserToHiddenHost();
+    // Clear active editor first so any pending or subsequent reattach checks know editor is closed
     audioProcessor.setEditor (nullptr);
+
+    // Reattach persistent browser into hidden host so playback doesn't halt when window closes
+    audioProcessor.reattachBrowserToHiddenHost();
 }
 
 void StrudelPlugAudioProcessorEditor::onBrowserUrlChanged (const juce::String& url)
@@ -468,7 +469,6 @@ void StrudelPlugAudioProcessorEditor::timerCallback()
     status += "OUT: " + (peakDb <= -59.0f ? "-inf" : juce::String (peakDb, 1)) + " dB | ";
     status += "BUF: " + juce::String (cushionSmp) + " (" + juce::String (cushionMs) + "ms)";
 
-    teleportLabel:
     telemetryLabel.setText (status, juce::dontSendNotification);
 
     audioLevelLed.setText (peakDb <= -59.0f ? "VOL -inf" : "VOL " + juce::String (peakDb, 1) + "dB",

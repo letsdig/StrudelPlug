@@ -100,6 +100,7 @@ public:
     // which is what previously caused playback to stop when the plugin
     // editor window was closed.
     void reattachBrowserToHiddenHost();
+    void detachBrowserFromHiddenHost();
 
 private:
     //==============================================================================
