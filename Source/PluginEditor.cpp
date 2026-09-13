@@ -133,7 +133,11 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     cushionComboBox.addItem ("1024 smp (~21ms)", 5);
     cushionComboBox.addItem ("2048 smp (~43ms)", 6);
     cushionComboBox.addItem ("4096 smp (~85ms)", 7);
-    cushionComboBox.setTooltip ("FIFO jitter cushion buffer (up to 2048/4096) to eliminate dropouts");
+    cushionComboBox.addItem ("6000 smp (125ms)", 8);
+    cushionComboBox.addItem ("8192 smp (~170ms)", 9);
+    cushionComboBox.addItem ("12000 smp (250ms)", 10);
+    cushionComboBox.addItem ("16384 smp (~340ms)", 11);
+    cushionComboBox.setTooltip ("FIFO jitter cushion buffer (up to 16384) to eliminate dropouts");
 
     int currentCushion = audioProcessor.getBridgeServer().getJitterCushionSamples();
     if (currentCushion <= 128)        cushionComboBox.setSelectedId (1, juce::dontSendNotification);
@@ -142,7 +146,11 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     else if (currentCushion <= 720)   cushionComboBox.setSelectedId (4, juce::dontSendNotification);
     else if (currentCushion <= 1024)  cushionComboBox.setSelectedId (5, juce::dontSendNotification);
     else if (currentCushion <= 2048)  cushionComboBox.setSelectedId (6, juce::dontSendNotification);
-    else                              cushionComboBox.setSelectedId (7, juce::dontSendNotification);
+    else if (currentCushion <= 4096)  cushionComboBox.setSelectedId (7, juce::dontSendNotification);
+    else if (currentCushion <= 6000)  cushionComboBox.setSelectedId (8, juce::dontSendNotification);
+    else if (currentCushion <= 8192)  cushionComboBox.setSelectedId (9, juce::dontSendNotification);
+    else if (currentCushion <= 12000) cushionComboBox.setSelectedId (10, juce::dontSendNotification);
+    else                              cushionComboBox.setSelectedId (11, juce::dontSendNotification);
 
     cushionComboBox.onChange = [this]
     {
@@ -155,6 +163,10 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
         else if (id == 5) smp = 1024;
         else if (id == 6) smp = 2048;
         else if (id == 7) smp = 4096;
+        else if (id == 8) smp = 6000;
+        else if (id == 9) smp = 8192;
+        else if (id == 10) smp = 12000;
+        else if (id == 11) smp = 16384;
 
         audioProcessor.getBridgeServer().setJitterCushionSamples (smp);
         audioProcessor.setLatencySamples (smp);
@@ -413,7 +425,7 @@ void StrudelPlugAudioProcessorEditor::resized()
 
     optionsRow.removeFromLeft (6);
     cushionLabel.setBounds (optionsRow.removeFromLeft (28));
-    cushionComboBox.setBounds (optionsRow.removeFromLeft (115).reduced (1, 1));
+    cushionComboBox.setBounds (optionsRow.removeFromLeft (130).reduced (1, 1));
 
     optionsRow.removeFromLeft (6);
     gainLabel.setBounds (optionsRow.removeFromLeft (32));

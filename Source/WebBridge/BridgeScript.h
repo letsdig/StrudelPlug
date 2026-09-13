@@ -962,27 +962,6 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                     if (window.strudelMirror) {
                         try {
                             const repl = window.strudelMirror.repl;
-                            const currentCode = window.strudelMirror.code || "";
-
-                            if (repl && repl.scheduler) {
-                                const sched = repl.scheduler;
-                                sched.setCps(targetCps);
-                                sched.lastEnd = startCycle;
-                                sched.lastBegin = startCycle;
-                                sched.num_cycles_at_cps_change = startCycle;
-                                sched.num_ticks_since_cps_change = 0;
-
-                                // If code has not changed and pattern is already loaded, resume immediately with zero jitter!
-                                if (sched.pattern && window.__lastEvaluatedCode__ === currentCode) {
-                                    if (!sched.started) {
-                                        sched.start();
-                                    }
-                                    return;
-                                }
-                            }
-
-                            // Code changed or no pattern yet: evaluate!
-                            window.__lastEvaluatedCode__ = currentCode;
                             if (typeof window.strudelMirror.evaluate === 'function') {
                                 window.strudelMirror.evaluate();
                                 if (repl && repl.scheduler) {
@@ -995,7 +974,7 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                                 return;
                             }
                             if (repl && typeof repl.evaluate === 'function') {
-                                repl.evaluate(currentCode);
+                                repl.evaluate(window.strudelMirror.code || "");
                                 if (repl.scheduler) {
                                     repl.scheduler.setCps(targetCps);
                                     repl.scheduler.lastEnd = startCycle;

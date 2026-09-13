@@ -135,7 +135,7 @@ public:
         return presets;
     }
 
-    void setJitterCushionSamples (int samples) noexcept { jitterCushionSamples.store (juce::jlimit (0, 8192, samples)); }
+    void setJitterCushionSamples (int samples) noexcept { jitterCushionSamples.store (juce::jlimit (0, 16384, samples)); }
     int getJitterCushionSamples() const noexcept { return jitterCushionSamples.load(); }
 
     void setJitterCushionMs (int ms) noexcept
