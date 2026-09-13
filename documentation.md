@@ -54,12 +54,12 @@ $: note("c3 eb3 g3 bb3").midichan(1).midi()
 $: chord("<Cm7 Fm7 Gm7 Cm7>").voicing().midi()
 ```
 
-### 2.3 DAW Transport, Tempo & Phase Synchronization (v1.0.6+)
+### 2.3 DAW Transport, Tempo & Phase Synchronization (v1.0.7+)
 - When **SYNC DAW** is enabled in the bottom telemetry bar:
   - **Tempo & BPM Tracking**: Host DAW BPM is automatically synchronized to Strudel's pattern scheduler (`cps = DAW_BPM / 240.0`, `cpm = DAW_BPM / 4.0`).
   - **Beat & Phase Locking**: On transport start, loop wrap, or timeline seek, Strudel's cycle phase is locked to the host playhead (`startCycle = ppqPosition / 4.0`), keeping kick drums, downbeats, and polyrhythms sample-aligned with DAW audio and MIDI clips.
   - **Plugin Delay Compensation (PDC)**: Reports exact jitter cushion buffer latency to the host via JUCE `setLatencySamples()`, ensuring the DAW aligns Strudel's audio output with other tracks.
-  - **Instant Clean Stop**: Stopping DAW transport instantly silences audio, flushes FIFO ring buffers, and clears all scheduled Web MIDI timers.
+  - **Instant Clean Stop & Anti-Hang**: Stopping DAW transport instantly silences audio, flushes FIFO ring buffers, and clears all active notes with All Sound Off (CC 120) and All Notes Off (CC 123).
 - You can also toggle SYNC off to let Strudel run free independently of host transport.
 
 ---
@@ -75,7 +75,6 @@ $: chord("<Cm7 Fm7 Gm7 Cm7>").voicing().midi()
 - **MIDI LED**: Real-time green activity indicator flashing when Strudel emits MIDI note events.
 - **VOL Meter**: Real-time peak level readout in decibels (`dB`).
 - **Buffer Cushion Selector**: Choose from `128 smp (~2.6ms)` to `4096 smp (~85ms)` to match session CPU load.
-- **Flush Button**: Resets jitter buffers and clears sound engine state instantly.
 - **Gain Slider**: Adjusts master output volume (-24 dB to +6 dB).
 
 ---
@@ -89,11 +88,11 @@ $: chord("<Cm7 Fm7 Gm7 Cm7>").voicing().midi()
 ### Installation Steps
 ```bash
 # 1. Download release archive
-tar -xzf StrudelPlug-v1.0.6-linux-x86_64.tar.gz
+tar -xzf StrudelPlug-v1.0.7-linux-x86_64.tar.gz
 
 # 2. Copy to VST3 folder
 mkdir -p ~/.vst3
-cp -r StrudelPlug-v1.0.6-linux-x86_64/StrudelPlug.vst3 ~/.vst3/
+cp -r StrudelPlug-v1.0.7-linux-x86_64/StrudelPlug.vst3 ~/.vst3/
 ```
 
 After installation, perform a plugin rescan in your DAW.

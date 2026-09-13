@@ -273,6 +273,13 @@ void StrudelPlugAudioProcessor::createPersistentBrowser()
                              int d2 = (int) obj->getProperty ("d2");
                              bridgeServer.injectMidiFromBrowser (status, d1, d2);
                          }
+                         else if (data.isArray() && data.size() >= 3)
+                         {
+                             int status = (int) data[0];
+                             int d1 = (int) data[1];
+                             int d2 = (int) data[2];
+                             bridgeServer.injectMidiFromBrowser (status, d1, d2);
+                         }
                      });
 
     browser = std::make_unique<StrudelBrowserComponent> (

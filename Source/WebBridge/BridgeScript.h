@@ -65,6 +65,43 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
         }
     } catch(e) {}
 
+    // =========================================================================
+    // WEBKIT-GTK GETOUTPUTTIMESTAMP & AUDIO SCHEDULING POLYFILL
+    // Strudel @strudel/midi and clockbridge rely on AudioContext.prototype.getOutputTimestamp.
+    // WebKitGTK does not implement getOutputTimestamp (WebKit Bug #176576),
+    // which caused getClockBridge().getPerformanceTime() to return NaN,
+    // logging "[midi] clockbridge not ready" and dropping all MIDI events!
+    // =========================================================================
+    const OrigAudioCtxForPolyfill = window.AudioContext || window.webkitAudioContext;
+    if (OrigAudioCtxForPolyfill && OrigAudioCtxForPolyfill.prototype) {
+        OrigAudioCtxForPolyfill.prototype.getOutputTimestamp = function() {
+            const ctxTime = (this && typeof this.currentTime === 'number') ? this.currentTime : 0;
+            return {
+                contextTime: Math.max(0.0001, ctxTime),
+                performanceTime: performance.now()
+            };
+        };
+    }
+
+    if (typeof AudioScheduledSourceNode !== "undefined" && AudioScheduledSourceNode.prototype && AudioScheduledSourceNode.prototype.start) {
+        const origSchedStart = AudioScheduledSourceNode.prototype.start;
+        AudioScheduledSourceNode.prototype.start = function() {
+            if (this.context && this.context.state === "suspended") {
+                this.context.resume().catch(() => {});
+            }
+            return origSchedStart.apply(this, arguments);
+        };
+    }
+    if (typeof ConstantSourceNode !== "undefined" && ConstantSourceNode.prototype && ConstantSourceNode.prototype.start) {
+        const origConstStart = ConstantSourceNode.prototype.start;
+        ConstantSourceNode.prototype.start = function() {
+            if (this.context && this.context.state === "suspended") {
+                this.context.resume().catch(() => {});
+            }
+            return origConstStart.apply(this, arguments);
+        };
+    }
+
     if (window.__JUCE_BRIDGE_LOADED__) {
         console.log("[JUCE-WebBridge] Re-arming context scan...");
         if (typeof scanAndHook === "function") scanAndHook();
@@ -281,16 +318,17 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
             if (!bytes || bytes.length === 0) return;
 
             const dispatchBytes = () => {
+                let sentNatively = false;
                 // Parse chunks so individual MIDI messages are safely forwarded
                 for (let i = 0; i < bytes.length;) {
                     const status = bytes[i];
                     if (status >= 0xF8) {
                         // System Real-Time (1 byte)
-                        sendNativeJuceEvent("dawMidiData", { status: status, d1: 0, d2: 0 });
+                        sentNatively = sendNativeJuceEvent("dawMidiData", { status: status, d1: 0, d2: 0 }) || sentNatively;
                         i += 1;
                     } else if ((status & 0xF0) === 0xC0 || (status & 0xF0) === 0xD0 || status === 0xF1 || status === 0xF3) {
                         // 2-byte messages (Program Change, Channel Pressure, MTC, Song Select)
-                        sendNativeJuceEvent("dawMidiData", { status: status, d1: bytes[i + 1] || 0, d2: 0 });
+                        sentNatively = sendNativeJuceEvent("dawMidiData", { status: status, d1: bytes[i + 1] || 0, d2: 0 }) || sentNatively;
                         i += 2;
                     } else if (status >= 0x80) {
                         // 3-byte messages (NoteOn, NoteOff, CC, PitchBend, Aftertouch, Song Position)
@@ -305,17 +343,17 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                             this.activeNotes.delete((ch << 8) | d1);
                         }
 
-                        sendNativeJuceEvent("dawMidiData", { status: status, d1: d1, d2: d2 });
+                        sentNatively = sendNativeJuceEvent("dawMidiData", { status: status, d1: d1, d2: d2 }) || sentNatively;
                         i += 3;
                     } else {
                         // Fallback: send 3 bytes or advance 1
-                        sendNativeJuceEvent("dawMidiData", { status: bytes[i] || 0, d1: bytes[i + 1] || 0, d2: bytes[i + 2] || 0 });
+                        sentNatively = sendNativeJuceEvent("dawMidiData", { status: bytes[i] || 0, d1: bytes[i + 1] || 0, d2: bytes[i + 2] || 0 }) || sentNatively;
                         i += 3;
                     }
                 }
 
-                // 2. Also forward via WebSocket if open (for external browser / Chrome)
-                if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+                // 2. Forward via WebSocket ONLY if native IPC was not active (prevents double note triggering)
+                if (!sentNatively && wsConnected && ws && ws.readyState === WebSocket.OPEN) {
                     const packet = new Uint8Array(1 + bytes.length);
                     packet[0] = 0x02; // MIDI opcode
                     packet.set(bytes, 1);
@@ -327,12 +365,13 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
 
             // High-resolution timestamp scheduling for WebMidi lookahead
             const now = performance.now();
-            if (typeof timestamp === 'number' && timestamp > now + 1) {
+            if (typeof timestamp === 'number' && !isNaN(timestamp) && timestamp > now + 1) {
                 const delay = Math.max(0, timestamp - now);
+                const safeDelay = Math.min(delay, 500); // Guard against runaway timer drift
                 const timerId = setTimeout(() => {
                     this.scheduledTimers.delete(timerId);
                     dispatchBytes();
-                }, delay);
+                }, safeDelay);
                 this.scheduledTimers.add(timerId);
             } else {
                 dispatchBytes();
@@ -360,6 +399,12 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                 }
             }
             this.activeNotes.clear();
+
+            // 2. Also send All Sound Off (CC 120) and All Notes Off (CC 123) across all channels
+            for (let ch = 0; ch < 16; ch++) {
+                sendNativeJuceEvent("dawMidiData", { status: 0xB0 | ch, d1: 120, d2: 0 });
+                sendNativeJuceEvent("dawMidiData", { status: 0xB0 | ch, d1: 123, d2: 0 });
+            }
         }
     }
 
@@ -558,6 +603,11 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
         allHookedContexts.add(ctx);
         window.__juceAudioCtx = ctx;
 
+        // Auto-resume context immediately upon discovery
+        if (ctx.state === "suspended") {
+            ctx.resume().catch(() => {});
+        }
+
         try {
             if (ctx.destination) {
                 try { ctx.destination.channelCount = 2; } catch(e) {}
@@ -573,6 +623,15 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
             silentSink.gain.value = CONFIG.muteSystemAudio ? 0.00001 : 1.0;
             try { silentSink.channelCount = 2; } catch(e) {}
             ctx.__juceSilentSink = silentSink;
+
+            // SYNCHRONOUS connection right away so any nodes connecting to destination/masterTap
+            // have an active audio graph without waiting for async addModule
+            if (origConnect) {
+                try {
+                    origConnect.call(masterTap, silentSink);
+                    origConnect.call(silentSink, ctx.destination);
+                } catch(e) {}
+            }
 
             let node = null;
 
@@ -631,8 +690,11 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
 
             ctx.__juceProc = node;
 
-            // Direct native connection to destination (bypassing custom connect hook)
-            if (origConnect) {
+            // Direct native connection: splice node between masterTap and silentSink
+            if (origConnect && node) {
+                try {
+                    masterTap.disconnect(silentSink);
+                } catch(e) {}
                 origConnect.call(masterTap, node);
                 origConnect.call(node, silentSink);
                 try {
@@ -640,7 +702,7 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                 } catch(e) {}
             }
 
-            console.log("[JUCE-WebBridge] AudioContext hooked successfully (" + (node.port ? "AudioWorklet" : "ScriptProcessor") + ") for Bitwig VST3!");
+            console.log("[JUCE-WebBridge] AudioContext hooked successfully (" + (node && node.port ? "AudioWorklet" : "ScriptProcessor") + ") for Bitwig VST3!");
         } catch (err) {
             console.error("[JUCE-WebBridge] Error hooking AudioContext:", err);
         }
@@ -665,6 +727,9 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                 }
                 super(...args);
                 hookContext(this);
+                if (this.state === "suspended") {
+                    this.resume().catch(() => {});
+                }
             }
         };
 
@@ -871,13 +936,11 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
 
                 if (window.strudelMirror && window.strudelMirror.repl && window.strudelMirror.repl.scheduler) {
                     const sched = window.strudelMirror.repl.scheduler;
-                    if (sched.started) {
-                        sched.lastEnd = cycle;
-                        sched.lastBegin = cycle;
-                        sched.num_cycles_at_cps_change = cycle;
-                        sched.num_ticks_since_cps_change = 0;
-                        sched.setCps(targetCps);
-                    }
+                    sched.lastEnd = cycle;
+                    sched.lastBegin = cycle;
+                    sched.num_cycles_at_cps_change = cycle;
+                    sched.num_ticks_since_cps_change = 0;
+                    sched.setCps(targetCps);
                 }
             } catch(e) {
                 console.warn("[JUCE-WebBridge] alignTransport error:", e);
@@ -899,6 +962,27 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                     if (window.strudelMirror) {
                         try {
                             const repl = window.strudelMirror.repl;
+                            const currentCode = window.strudelMirror.code || "";
+
+                            if (repl && repl.scheduler) {
+                                const sched = repl.scheduler;
+                                sched.setCps(targetCps);
+                                sched.lastEnd = startCycle;
+                                sched.lastBegin = startCycle;
+                                sched.num_cycles_at_cps_change = startCycle;
+                                sched.num_ticks_since_cps_change = 0;
+
+                                // If code has not changed and pattern is already loaded, resume immediately with zero jitter!
+                                if (sched.pattern && window.__lastEvaluatedCode__ === currentCode) {
+                                    if (!sched.started) {
+                                        sched.start();
+                                    }
+                                    return;
+                                }
+                            }
+
+                            // Code changed or no pattern yet: evaluate!
+                            window.__lastEvaluatedCode__ = currentCode;
                             if (typeof window.strudelMirror.evaluate === 'function') {
                                 window.strudelMirror.evaluate();
                                 if (repl && repl.scheduler) {
@@ -911,7 +995,7 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                                 return;
                             }
                             if (repl && typeof repl.evaluate === 'function') {
-                                repl.evaluate(window.strudelMirror.code || "");
+                                repl.evaluate(currentCode);
                                 if (repl.scheduler) {
                                     repl.scheduler.setCps(targetCps);
                                     repl.scheduler.lastEnd = startCycle;

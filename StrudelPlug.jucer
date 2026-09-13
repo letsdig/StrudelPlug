@@ -2,7 +2,7 @@
 
 <JUCERPROJECT id="FllXfg" name="StrudelPlug" projectType="audioplug" useAppConfig="0"
               addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1" pluginFormats="buildVST3"
-              version="1.0.6"
+              version="1.0.7"
               pluginCharacteristicsValue="pluginProducesMidiOut,pluginWantsMidiIn" pluginVST3Category="Instrument,Tools">
   <MAINGROUP id="UQvy0p" name="StrudelPlug">
     <GROUP id="{F3EEE2C2-3699-F134-FE69-B5B00D44C527}" name="Source">
