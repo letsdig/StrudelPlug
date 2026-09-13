@@ -102,6 +102,12 @@ Then open or rescan your plugins in Bitwig Studio:
 
 ---
 
+## Documentation & Guide
+
+For in-depth architecture details, real-time safety, lookahead scheduling, and pattern routing examples, see [documentation.md](documentation.md).
+
+---
+
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
