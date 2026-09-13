@@ -222,53 +222,101 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
     // =========================================================================
     // 2. WEB MIDI SHIM (Bitwig Track <-> Web Instrument)
     // =========================================================================
-    class VirtualMIDIInput extends EventTarget {
-        constructor() {
+    class VirtualMIDIPort extends EventTarget {
+        constructor(id, name, type) {
             super();
-            this.id = "juce-daw-midi-in";
-            this.name = "DAW MIDI Input (Bitwig Track)";
+            this.id = id;
+            this.name = name;
             this.manufacturer = "AudioWebLab";
             this.version = "1.0";
-            this.type = "input";
+            this.type = type;
             this.state = "connected";
             this.connection = "open";
+            this.onstatechange = null;
+        }
+
+        async open() {
+            this.connection = "open";
+            return this;
+        }
+
+        async close() {
+            this.connection = "closed";
+            return this;
+        }
+    }
+
+    class VirtualMIDIInput extends VirtualMIDIPort {
+        constructor() {
+            super("juce-daw-midi-in", "DAW MIDI Input (Bitwig Track)", "input");
             this.onmidimessage = null;
         }
     }
 
-    class VirtualMIDIOutput {
+    class VirtualMIDIOutput extends VirtualMIDIPort {
         constructor() {
-            this.id = "juce-daw-midi-out";
-            this.name = "DAW MIDI Output (To Bitwig)";
-            this.manufacturer = "AudioWebLab";
-            this.version = "1.0";
-            this.type = "output";
-            this.state = "connected";
-            this.connection = "open";
+            super("juce-daw-midi-out", "DAW MIDI Output (Bitwig / IAC Driver / Track)", "output");
+            this.scheduledTimers = new Set();
         }
 
         send(data, timestamp) {
             const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+            if (!bytes || bytes.length === 0) return;
 
-            // 1. Send via native JUCE IPC (works on ANY page)
-            sendNativeJuceEvent("dawMidiData", {
-                status: bytes[0] || 0,
-                d1: bytes[1] || 0,
-                d2: bytes[2] || 0
-            });
+            const dispatchBytes = () => {
+                // Parse chunks so individual MIDI messages are safely forwarded
+                for (let i = 0; i < bytes.length;) {
+                    const status = bytes[i];
+                    if (status >= 0xF8) {
+                        // System Real-Time (1 byte)
+                        sendNativeJuceEvent("dawMidiData", { status: status, d1: 0, d2: 0 });
+                        i += 1;
+                    } else if ((status & 0xF0) === 0xC0 || (status & 0xF0) === 0xD0 || status === 0xF1 || status === 0xF3) {
+                        // 2-byte messages (Program Change, Channel Pressure, MTC, Song Select)
+                        sendNativeJuceEvent("dawMidiData", { status: status, d1: bytes[i + 1] || 0, d2: 0 });
+                        i += 2;
+                    } else if (status >= 0x80) {
+                        // 3-byte messages (NoteOn, NoteOff, CC, PitchBend, Aftertouch, Song Position)
+                        sendNativeJuceEvent("dawMidiData", { status: status, d1: bytes[i + 1] || 0, d2: bytes[i + 2] || 0 });
+                        i += 3;
+                    } else {
+                        // Fallback: send 3 bytes or advance 1
+                        sendNativeJuceEvent("dawMidiData", { status: bytes[i] || 0, d1: bytes[i + 1] || 0, d2: bytes[i + 2] || 0 });
+                        i += 3;
+                    }
+                }
 
-            // 2. Send via WebSocket if open (for external Google Chrome)
-            if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
-                const packet = new Uint8Array(1 + bytes.length);
-                packet[0] = 0x02; // MIDI opcode
-                packet.set(bytes, 1);
-                try {
-                    ws.send(packet.buffer);
-                } catch (e) {}
+                // 2. Also forward via WebSocket if open (for external browser / Chrome)
+                if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+                    const packet = new Uint8Array(1 + bytes.length);
+                    packet[0] = 0x02; // MIDI opcode
+                    packet.set(bytes, 1);
+                    try {
+                        ws.send(packet.buffer);
+                    } catch (e) {}
+                }
+            };
+
+            // High-resolution timestamp scheduling for WebMidi lookahead
+            const now = performance.now();
+            if (typeof timestamp === 'number' && timestamp > now + 1) {
+                const delay = Math.max(0, timestamp - now);
+                const timerId = setTimeout(() => {
+                    this.scheduledTimers.delete(timerId);
+                    dispatchBytes();
+                }, delay);
+                this.scheduledTimers.add(timerId);
+            } else {
+                dispatchBytes();
             }
         }
 
-        clear() {}
+        clear() {
+            for (const t of this.scheduledTimers) {
+                clearTimeout(t);
+            }
+            this.scheduledTimers.clear();
+        }
     }
 
     const virtualMidiInput = new VirtualMIDIInput();
@@ -359,8 +407,7 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
         constructor() {
             super();
             this.inputs = new Map([
-                [virtualMidiInput.id, virtualMidiInput],
-                ["bitwig-midi-in", virtualMidiInput]
+                [virtualMidiInput.id, virtualMidiInput]
             ]);
             this.outputs = new Map([[virtualMidiOutput.id, virtualMidiOutput]]);
             this.sysexEnabled = true;
@@ -705,6 +752,47 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
             updateMuteState();
         },
         dispatchMidiFromDaw: dispatchMidiFromDaw,
+        dispatchMidiFromOsc: function(address, args) {
+            try {
+                let status = 0;
+                let d1 = 0;
+                let d2 = 0;
+
+                // Support a generic OSC payload shape that carries MIDI-style fields
+                // as either an array [status, d1, d2] or an object with keys.
+                if (Array.isArray(args) && args.length >= 3) {
+                    status = Number(args[0]) || 0;
+                    d1 = Number(args[1]) || 0;
+                    d2 = Number(args[2]) || 0;
+                }
+                else if (args && typeof args === 'object') {
+                    status = Number(args.status || args.type || args.event || 0) || 0;
+                    d1 = Number(args.d1 || args.note || args.data1 || args.channel || 0) || 0;
+                    d2 = Number(args.d2 || args.velocity || args.data2 || args.value || 0) || 0;
+                }
+                else if (typeof args === 'string') {
+                    const m = String(args).trim().match(/^(\d+)[,\s]+(\d+)[,\s]+(\d+)$/);
+                    if (m) {
+                        status = Number(m[1]);
+                        d1 = Number(m[2]);
+                        d2 = Number(m[3]);
+                    }
+                }
+
+                if (address && typeof address === 'string' && address.length > 0) {
+                    // Keep this permissive: only MIDI-style packets are forwarded.
+                    if (status >= 0x80 && status <= 0xEF && d1 >= 0 && d1 <= 127 && d2 >= 0 && d2 <= 127) {
+                        sendNativeJuceEvent("dawMidiData", {
+                            status: status & 0xFF,
+                            d1: d1 & 0xFF,
+                            d2: d2 & 0xFF
+                        });
+                    }
+                }
+            } catch (e) {
+                console.warn("[JUCE-WebBridge] dispatchMidiFromOsc error:", e);
+            }
+        },
         setTransportPlay: function(play) {
             try {
                 if (play) {
@@ -726,6 +814,10 @@ inline juce::String getInjectionScript(int bridgePort = 8788, int targetSampleRa
                     playBtns.forEach(btn => btn.click());
                 } else {
                     CONFIG.transportPlaying = false;
+                    try {
+                        virtualMidiOutput.clear();
+                        window.postMessage('strudel-stop', '*');
+                    } catch(e) {}
                     let stoppedNatively = false;
                     if (window.strudelMirror) {
                         try {

@@ -2,6 +2,7 @@
 
 #include <juce_core/juce_core.h>
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_audio_devices/juce_audio_devices.h>
 #include "Sha1.h"
 #include "BridgeScript.h"
 
@@ -305,16 +306,56 @@ public:
                               static_cast<uint8_t>(d2));
         std::lock_guard<std::mutex> lock(midiMutex);
         incomingMidi.push_back(msg);
-        midiInActivity.store(true);
+        midiOutActivity.store(true);
+    }
+
+    void setMidiOutputDevice(const juce::String& deviceIdentifier)
+    {
+        midiOutputDevice.reset();
+
+        auto route = deviceIdentifier.trim();
+        if (route.isEmpty())
+        {
+            // Do not silently auto-patch to the first ALSA/MIDI port.
+            // An empty route means: keep MIDI inside the DAW buffer only.
+            return;
+        }
+
+        // Try a scoped, explicit open only for the requested identifier.
+        auto outputs = juce::MidiOutput::getAvailableDevices();
+        for (const auto& output : outputs)
+        {
+            if (output.identifier == route)
+            {
+                midiOutputDevice = juce::MidiOutput::openDevice(route);
+                break;
+            }
+        }
     }
 
     // MIDI: Read MIDI received from browser (called from processBlock)
+    //
+    // IMPORTANT: this runs on the real-time audio thread. incomingMidi is
+    // also written from the WebSocket thread (processWebSocketFrames) and
+    // from the message thread (the "dawMidiData" native event listener), so
+    // a lock is unavoidable - but a *blocking* lock here is not real-time
+    // safe: if either of those threads is holding midiMutex when the host
+    // calls processBlock, the audio thread stalls waiting for it, which can
+    // cause the host to miss/deliver-late the very MIDI events this method
+    // is supposed to hand it. Use try_lock instead: if the lock isn't free
+    // right now, skip this block and pick the messages up on the next one
+    // (they stay queued in incomingMidi) rather than blocking audio.
     void getMidiFromBrowser(juce::MidiBuffer& destBuffer, int sampleOffset = 0)
     {
-        std::lock_guard<std::mutex> lock(midiMutex);
+        std::unique_lock<std::mutex> lock(midiMutex, std::try_to_lock);
+        if (!lock.owns_lock())
+            return;
+
         for (const auto& msg : incomingMidi)
         {
             destBuffer.addEvent(msg, sampleOffset);
+            if (midiOutputDevice != nullptr)
+                midiOutputDevice->sendMessageNow(msg);
         }
         if (!incomingMidi.empty())
         {
@@ -917,6 +958,7 @@ p { color: #94a3b8; font-size: 14px; line-height: 1.6; }
 
     std::mutex midiMutex;
     std::vector<juce::MidiMessage> incomingMidi;
+    std::unique_ptr<juce::MidiOutput> midiOutputDevice;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WebBridgeServer)
 };

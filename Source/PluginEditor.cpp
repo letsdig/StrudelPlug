@@ -180,7 +180,24 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     };
     addAndMakeVisible (gainSlider);
 
-    // 5. Reset / Flush Buffer Push Button
+    // 5. Volume LED / MIDI Activity LED
+    audioLevelLed.setColour (juce::Label::backgroundColourId, juce::Colour (0xff021b1b));
+    audioLevelLed.setColour (juce::Label::outlineColourId, juce::Colour (0xff004848));
+    audioLevelLed.setColour (juce::Label::textColourId, juce::Colour (0xff00f4f4));
+    audioLevelLed.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 10.5f, juce::Font::bold)));
+    audioLevelLed.setJustificationType (juce::Justification::centred);
+    audioLevelLed.setText ("VOL -inf", juce::dontSendNotification);
+    addAndMakeVisible (audioLevelLed);
+
+    midiLed.setColour (juce::Label::backgroundColourId, juce::Colour (0xff021b1b));
+    midiLed.setColour (juce::Label::outlineColourId, juce::Colour (0xff004848));
+    midiLed.setColour (juce::Label::textColourId, juce::Colour (0xff7a8296));
+    midiLed.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 10.5f, juce::Font::bold)));
+    midiLed.setJustificationType (juce::Justification::centred);
+    midiLed.setText ("MIDI", juce::dontSendNotification);
+    addAndMakeVisible (midiLed);
+
+    // 6. Reset / Flush Buffer Push Button
     flushBtn.setTooltip ("Flush FIFO ringbuffer and resynchronize Web Audio stream");
     flushBtn.onClick = [this]
     {
@@ -192,7 +209,7 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     };
     addAndMakeVisible (flushBtn);
 
-    // 6. Real-time Telemetry LCD Display
+    // 7. Real-time Telemetry LCD Display
     telemetryLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff021b1b));
     telemetryLabel.setColour (juce::Label::outlineColourId, juce::Colour (0xff004848));
     telemetryLabel.setColour (juce::Label::textColourId, juce::Colour (0xff00f4f4));
@@ -413,6 +430,12 @@ void StrudelPlugAudioProcessorEditor::resized()
     gainSlider.setBounds (optionsRow.removeFromLeft (130).reduced (1, 1));
 
     optionsRow.removeFromLeft (6);
+    audioLevelLed.setBounds (optionsRow.removeFromLeft (92).reduced (2, 0));
+
+    optionsRow.removeFromLeft (6);
+    midiLed.setBounds (optionsRow.removeFromLeft (92).reduced (2, 0));
+
+    optionsRow.removeFromLeft (6);
     flushBtn.setBounds (optionsRow.removeFromLeft (70).reduced (1, 0));
 
     // Remaining right area of options strip is Telemetry LCD
@@ -432,6 +455,9 @@ void StrudelPlugAudioProcessorEditor::timerCallback()
     const int dawRate = server.getDawSampleRate();
     const float peak = server.getPeakAudioOutLevel();
     const float peakDb = peak > 0.00001f ? juce::Decibels::gainToDecibels (peak) : -60.0f;
+    const bool midiIn = server.checkAndResetMidiInActivity();
+    const bool midiOut = server.checkAndResetMidiOutActivity();
+    const bool midiActive = midiIn || midiOut;
     const int cushionMs = server.getJitterCushionMs();
     const int cushionSmp = server.getJitterCushionSamples();
     const bool isPlaying = audioProcessor.isDawPlaying();
@@ -442,7 +468,18 @@ void StrudelPlugAudioProcessorEditor::timerCallback()
     status += "OUT: " + (peakDb <= -59.0f ? "-inf" : juce::String (peakDb, 1)) + " dB | ";
     status += "BUF: " + juce::String (cushionSmp) + " (" + juce::String (cushionMs) + "ms)";
 
+    teleportLabel:
     telemetryLabel.setText (status, juce::dontSendNotification);
+
+    audioLevelLed.setText (peakDb <= -59.0f ? "VOL -inf" : "VOL " + juce::String (peakDb, 1) + "dB",
+                            juce::dontSendNotification);
+    audioLevelLed.setColour (juce::Label::textColourId,
+                             peakDb > -28.0f ? juce::Colour (0xff00f4f4)
+                                              : juce::Colour (0xff7a8296));
+
+    midiLed.setColour (juce::Label::textColourId,
+                       midiActive ? juce::Colour (0xff38ef7d)
+                                   : juce::Colour (0xff7a8296));
 }
 
 void StrudelPlugAudioProcessorEditor::sendMidiToBrowser (const juce::MidiMessage& msg)

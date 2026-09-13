@@ -63,6 +63,8 @@ private:
 
     juce::TextButton flushBtn { juce::CharPointer_UTF8 ("\xe2\x9f\xb2 Flush") }; // ⟲ Flush
 
+    juce::Label audioLevelLed { {}, "OUT" };
+    juce::Label midiLed { {}, "MIDI" };
     juce::Label telemetryLabel;
 
     void textEditorReturnKeyPressed (juce::TextEditor&) override;
