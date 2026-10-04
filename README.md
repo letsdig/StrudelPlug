@@ -112,6 +112,13 @@ For in-depth architecture details, real-time safety, lookahead scheduling, and p
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
-Built with JUCE 7 & Strudel.
+Copyright (C) 2026 letsdig
+
+StrudelPlug is free software: you can redistribute it and/or modify it under the terms of the
+**GNU Affero General Public License v3.0 or later** (AGPL-3.0-or-later), as published by the
+Free Software Foundation. See [LICENSE](LICENSE) for the full text.
+
+StrudelPlug integrates with [Strudel](https://codeberg.org/uzu/strudel), which is itself licensed
+under the AGPL-3.0, so the plugin is distributed under the same terms.
+Built with JUCE & Strudel.
 

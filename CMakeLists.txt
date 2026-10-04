@@ -26,6 +26,9 @@ juce_add_plugin(StrudelPlug
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
     NEEDS_WEB_BROWSER TRUE
+    # Linux needs libcurl for HTTPS URL streams (used to fetch Strudel, see StrudelFetch.h).
+    # Ignored on macOS/Windows, which use the native networking stack.
+    NEEDS_CURL TRUE
     VST3_CATEGORIES Instrument Tools
     AU_MAIN_TYPE kAudioUnitType_MusicEffect
     COPY_PLUGIN_AFTER_BUILD TRUE)
@@ -38,7 +41,6 @@ target_sources(StrudelPlug PRIVATE
 
 target_compile_definitions(StrudelPlug PRIVATE
     JUCE_WEB_BROWSER=1
-    JUCE_USE_CURL=0
     JUCE_STRICT_REFCOUNTEDPOINTER=1
     JUCE_VST3_CAN_REPLACE_VST2=0)
 

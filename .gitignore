@@ -1,5 +1,7 @@
 # Build artifacts
 build/
+build-cmake/
+build-cmake*.log
 Builds/LinuxMakefile/build/
 bin/
 *.o
