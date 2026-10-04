@@ -81,8 +81,10 @@ $: chord("<Cm7 Fm7 Gm7 Cm7>").voicing().midi()
 ## 3. User Interface & Controls
 
 ### 3.1 Header Bar
-The browser always shows the Strudel REPL served by the plugin's own bridge server (`http://127.0.0.1:<bridge port>/strudel/`); there is no address bar and no remote option.
-- **Status LCD** (next to the title): `CONNECTING...`, `ONLINE: AUDIO+MIDI`, `FETCHING STRUDEL...`, `STRUDEL READY`, `FETCH FAILED: ...`.
+- **`ONLINE` / `LOCAL` switch** (left of `⚙`): chooses where Strudel comes from. The choice is saved with the DAW project.
+  - `ONLINE` (default): loads `https://strudel.cc/`, the full web REPL. Needs internet.
+  - `LOCAL`: loads the Strudel REPL served by the plugin's own bridge server (`http://127.0.0.1:<bridge port>/strudel/`). The first time, Strudel is downloaded automatically from npm; afterwards it works offline.
+- **Status LCD** (next to the title): `CONNECTING...`, `ONLINE: AUDIO+MIDI`, `LOCAL: AUDIO+MIDI`, `FETCHING STRUDEL...`, `STRUDEL READY`, `FETCH FAILED: ...`.
 - **SYNC DAW Button**: Toggles automatic transport synchronization with the DAW.
 - **VOL Meter**: Real-time peak level readout in decibels (`dB`).
 - **MIDI LED**: Real-time green activity indicator flashing when Strudel emits MIDI note events.
@@ -93,12 +95,12 @@ The browser always shows the Strudel REPL served by the plugin's own bridge serv
 - **Sample Rate Selector (Hz)**: WebKit AudioContext rate, `Auto (DAW)` or fixed.
 - **Buffer Cushion Selector**: Choose from `128 smp (~2.6ms)` to `16384 smp (~340ms)` to match session CPU load and project requirements.
 - **Telemetry LCD**: DAW rate, transport state, output dB, buffer size.
-- **`⟳` Reload**: reloads the local page.
-- **`↓` Download / Update**: fetches the latest `@strudel/repl` package tarball from the npm registry, unpacks its `dist/` folder into the user app-data directory (`StrudelPlug/strudel`) and reloads the page. Use it for the first install and for later updates.
-- **Not installed yet**: until a build is on disk the page shows a warning pointing at `⚙` → `↓` instead of a blank editor.
-- **Default pattern**: a fresh instance opens with `silence`; the code saved in the DAW project replaces it once the editor is ready.
-- **Offline**: synth sounds work without internet; sample packs still need a connection.
-- **MIDI input works**: the page is plain `http`, so the bridge script can open the MIDI-in WebSocket that an `https` page would block as mixed content.
+- **`⟳` Reload**: reloads the current page (online or local).
+- **`↓` Download / Update**: fetches the latest `@strudel/repl` package tarball from the npm registry, unpacks its `dist/` folder into the user app-data directory (`StrudelPlug/strudel`) and switches to `LOCAL`. Use it for later updates (the first download starts by itself when you pick `LOCAL`).
+- **Not installed yet** (`LOCAL` only): until a build is on disk the page shows a warning pointing at `⚙` → `↓` instead of a blank editor.
+- **Default pattern** (`LOCAL`): a fresh instance opens with `silence`; the code saved in the DAW project replaces it once the editor is ready.
+- **Offline** (`LOCAL`): synth sounds work without internet; sample packs still need a connection.
+- **MIDI input** (`LOCAL`): the page is plain `http`, so the bridge script can open the MIDI-in WebSocket that an `https` page (like strudel.cc) would block as mixed content.
 - *Licensing*: Strudel is AGPL and is not bundled with the plugin; it is only downloaded at runtime. No Node.js required.
 
 ---

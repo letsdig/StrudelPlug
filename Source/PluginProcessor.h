@@ -59,9 +59,15 @@ public:
     void setStateInformation (const void* data, int sizeInBytes) override;
 
     // Strudel session helpers
+    // The saved URL is either a web address (e.g. https://strudel.cc/) or the token
+    // localStrudelToken, which means "the locally served Strudel page" (its port changes per session).
+    static constexpr const char* defaultStrudelUrl = "https://strudel.cc/";
+    static constexpr const char* localStrudelToken = "local";
     void setServerUrl (const juce::String& url);
     juce::String getServerUrl() const;
-    juce::String getLocalStrudelUrl() const;   // the only page the browser ever shows
+    juce::String getLocalStrudelUrl() const;   // locally served page (Strudel downloaded from npm)
+    juce::String resolveBrowserUrl() const;    // actual address to load for the saved URL / token
+    bool isLocalStrudelUrl (const juce::String& url) const;
     void setCode (const juce::String& newCode);
     juce::String getCode() const;
     void evaluateCode();

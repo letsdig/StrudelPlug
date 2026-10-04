@@ -36,6 +36,10 @@ private:
     static constexpr int headerHeight   = 32;
     static constexpr int settingsHeight = 36;
 
+    // --- Mode switch: ONLINE (strudel.cc) or LOCAL (offline page served by the plugin) ---
+    juce::TextButton onlineBtn { "ONLINE" };
+    juce::TextButton localBtn { "LOCAL" };
+
     // --- Header Row: status, transport, levels, gain; settings toggle at far right ---
     juce::Label statusLabel;
     juce::TextButton syncDawBtn { "● SYNC DAW" };
@@ -58,6 +62,8 @@ private:
     void setSettingsOpen (bool open);
     void reloadPage();
     void fetchStrudel();
+    void navigateTo (const juce::String& url);
+    void updateModeButtons();
 
     void timerCallback() override;
 

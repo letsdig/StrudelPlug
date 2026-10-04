@@ -330,12 +330,33 @@ void StrudelPlugAudioProcessor::createPersistentBrowser()
             }
         });
 
-    browser->goToURL (getLocalStrudelUrl());
+    browser->goToURL (resolveBrowserUrl());
 }
 
 juce::String StrudelPlugAudioProcessor::getLocalStrudelUrl() const
 {
     return "http://127.0.0.1:" + juce::String (bridgeServer.getPort()) + "/strudel/";
+}
+
+bool StrudelPlugAudioProcessor::isLocalStrudelUrl (const juce::String& url) const
+{
+    auto u = url.trim();
+    return u == localStrudelToken
+        || ((u.startsWith ("http://127.0.0.1:") || u.startsWith ("http://localhost:")) && u.contains ("/strudel/"));
+}
+
+juce::String StrudelPlugAudioProcessor::resolveBrowserUrl() const
+{
+    auto saved = sharedServerUrl.trim();
+
+    if (isLocalStrudelUrl (saved))
+        return getLocalStrudelUrl();
+
+    // Empty, or the old "Start Node" address (that server no longer exists): go online.
+    if (saved.isEmpty() || saved.startsWith ("http://127.0.0.1:54321"))
+        return defaultStrudelUrl;
+
+    return saved;
 }
 
 void StrudelPlugAudioProcessor::restoreBrowserCode (const juce::String& codeToRestore)
@@ -454,7 +475,7 @@ juce::String StrudelPlugAudioProcessor::getCode() const
 
 void StrudelPlugAudioProcessor::evaluateCode()
 {
-    if (sharedServerUrl.isEmpty())
+    if (sharedServerUrl.isEmpty() || ! sharedServerUrl.startsWithIgnoreCase ("http"))
         serverStatus = "No Strudel server";
     else
         sendHttpRequest (sharedServerUrl + "/api/evaluate", code, serverStatus);
@@ -496,7 +517,7 @@ juce::String StrudelPlugAudioProcessor::getServerStatus() const
 void StrudelPlugAudioProcessor::setServerUrl (const juce::String& url)
 {
     if (url.trim().isNotEmpty())
-        sharedServerUrl = url.trim();
+        sharedServerUrl = isLocalStrudelUrl (url) ? juce::String (localStrudelToken) : url.trim();
 }
 
 juce::String StrudelPlugAudioProcessor::getServerUrl() const

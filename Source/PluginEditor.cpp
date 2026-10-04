@@ -28,12 +28,25 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     // =========================================================================
     // Header Row Callbacks & Tooltips
     // =========================================================================
-    // Strudel is served by the plugin's own bridge server: no internet, and
-    // being plain http the page can open the MIDI-in WebSocket (https pages can't).
-    reloadButton.setTooltip ("Reload Strudel");
+    // Two modes, chosen by the user and saved with the project:
+    //  - ONLINE (default): https://strudel.cc/
+    //  - LOCAL: Strudel served by the plugin's own bridge server: no internet after the
+    //    first download, and being plain http the page can open the MIDI-in WebSocket.
+    onlineBtn.setTooltip ("Use Strudel online (strudel.cc)");
+    onlineBtn.onClick = [this] { navigateTo (StrudelPlugAudioProcessor::defaultStrudelUrl); };
+
+    localBtn.setTooltip ("Use the local offline Strudel (downloaded once from npm)");
+    localBtn.onClick = [this]
+    {
+        navigateTo (StrudelPlugAudioProcessor::localStrudelToken);
+        if (! StrudelFetch::isInstalled())
+            fetchStrudel();   // first use: download, then the page reloads by itself
+    };
+
+    reloadButton.setTooltip ("Reload page");
     reloadButton.onClick = [this] { reloadPage(); };
 
-    fetchBtn.setTooltip ("Download / update Strudel from npm");
+    fetchBtn.setTooltip ("Download / update Strudel from npm for the Local page");
     fetchBtn.onClick = [this] { fetchStrudel(); };
 
     settingsBtn.setTooltip ("Settings");
@@ -226,6 +239,18 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     settingsBtn.setColour (juce::TextButton::textColourOnId, cyanGlow);
     addAndMakeVisible (settingsBtn);
 
+    for (auto* b : { &onlineBtn, &localBtn })
+    {
+        b->setColour (juce::TextButton::buttonColourId, darkBtnCol);
+        b->setColour (juce::TextButton::buttonOnColourId, darkTeal);
+        b->setColour (juce::TextButton::textColourOffId, juce::Colour (0xff7a8296));
+        b->setColour (juce::TextButton::textColourOnId, cyanGlow);
+        addAndMakeVisible (b);
+    }
+    onlineBtn.setConnectedEdges (juce::Button::ConnectedOnRight);
+    localBtn.setConnectedEdges (juce::Button::ConnectedOnLeft);
+    updateModeButtons();
+
     for (auto* cb : { &srComboBox, &cushionComboBox })
     {
         cb->setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff12141c));
@@ -252,7 +277,7 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
 
     // Window size & limits
     setResizable (true, true);
-    setResizeLimits (820, 500, 3840, 2160);
+    setResizeLimits (920, 500, 3840, 2160);
     setSize (1060, 720);
     setSettingsOpen (false);
 
@@ -274,7 +299,9 @@ StrudelPlugAudioProcessorEditor::~StrudelPlugAudioProcessorEditor()
 
 void StrudelPlugAudioProcessorEditor::onBrowserUrlChanged (const juce::String&)
 {
-    statusLabel.setText ("ONLINE: AUDIO+MIDI", juce::dontSendNotification);
+    updateModeButtons();
+    const bool local = audioProcessor.isLocalStrudelUrl (audioProcessor.getServerUrl());
+    statusLabel.setText (local ? "LOCAL: AUDIO+MIDI" : "ONLINE: AUDIO+MIDI", juce::dontSendNotification);
     statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xff00f4f4));
 }
 
@@ -283,7 +310,25 @@ void StrudelPlugAudioProcessorEditor::reloadPage()
     statusLabel.setText ("CONNECTING...", juce::dontSendNotification);
     statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffb703));
     if (auto* b = audioProcessor.getBrowser())
-        b->goToURL (audioProcessor.getLocalStrudelUrl());
+        b->goToURL (audioProcessor.resolveBrowserUrl());
+}
+
+void StrudelPlugAudioProcessorEditor::navigateTo (const juce::String& url)
+{
+    auto target = url.trim();
+    if (target.isEmpty())
+        return;
+
+    audioProcessor.setServerUrl (target);
+    updateModeButtons();
+    reloadPage();
+}
+
+void StrudelPlugAudioProcessorEditor::updateModeButtons()
+{
+    const bool local = audioProcessor.isLocalStrudelUrl (audioProcessor.getServerUrl());
+    localBtn.setToggleState (local, juce::dontSendNotification);
+    onlineBtn.setToggleState (! local, juce::dontSendNotification);
 }
 
 // Always downloads the latest @strudel/repl, then reloads the page so it picks
@@ -304,7 +349,7 @@ void StrudelPlugAudioProcessorEditor::fetchStrudel()
         {
             self->statusLabel.setText ("STRUDEL READY", juce::dontSendNotification);
             self->statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xff38ef7d));
-            self->reloadPage();
+            self->navigateTo (StrudelPlugAudioProcessor::localStrudelToken);
         }
         else
         {
@@ -398,6 +443,10 @@ void StrudelPlugAudioProcessorEditor::resized()
     // Row 1: Header: title (painted), status LCD, sync, levels, gain; settings toggle at far right
     auto header = bounds.removeFromTop (headerHeight).reduced (16, 5);
     settingsBtn.setBounds (header.removeFromRight (24).reduced (1, 0));
+    header.removeFromRight (8);
+    localBtn.setBounds (header.removeFromRight (56));
+    onlineBtn.setBounds (header.removeFromRight (62));
+    header.removeFromRight (4);
     header.removeFromLeft (112);   // painted title
     statusLabel.setBounds (header.removeFromLeft (150));
 
