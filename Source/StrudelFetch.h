@@ -37,6 +37,17 @@ namespace StrudelFetch
         return directory().getChildFile ("index.js").existsAsFile();
     }
 
+    // Removes the downloaded build from disk so isInstalled() is false again.
+    // Returns true if nothing of the build is left behind (true also when it was
+    // never installed). Safe to call from the message thread.
+    inline bool removeInstalled()
+    {
+        auto dir = directory();
+        if (dir.isDirectory())
+            dir.deleteRecursively();
+        return ! dir.exists();
+    }
+
     inline std::unique_ptr<juce::InputStream> open (const juce::String& url, juce::String& error)
     {
         auto stream = juce::URL (url).createInputStream (

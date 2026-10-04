@@ -55,13 +55,15 @@ private:
     juce::Label cushionLabel { {}, "Buf:" };
     juce::ComboBox cushionComboBox;
     juce::Label telemetryLabel;
-    juce::TextButton reloadButton { juce::CharPointer_UTF8 ("\xe2\x86\xbb") };  // ⟳
-    juce::TextButton fetchBtn { juce::CharPointer_UTF8 ("\xe2\x86\x93") };     // ↓ download/update @strudel/repl
+    juce::TextButton reloadButton { "Reload" };   // reload the current page (online or local)
+    juce::TextButton fetchBtn { "Download" };     // download / update @strudel/repl from npm
+    juce::TextButton deleteBtn { "Delete" };      // delete the downloaded @strudel/repl
     bool settingsOpen = false;
 
     void setSettingsOpen (bool open);
     void reloadPage();
     void fetchStrudel();
+    void deleteStrudel();
     void navigateTo (const juce::String& url);
     void updateModeButtons();
 

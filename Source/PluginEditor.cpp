@@ -35,12 +35,12 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     onlineBtn.setTooltip ("Use Strudel online (strudel.cc)");
     onlineBtn.onClick = [this] { navigateTo (StrudelPlugAudioProcessor::defaultStrudelUrl); };
 
-    localBtn.setTooltip ("Use the local offline Strudel (downloaded once from npm)");
+    localBtn.setTooltip ("Use the local offline Strudel (install it with Settings > Download)");
     localBtn.onClick = [this]
     {
+        // No automatic download: if Strudel is not on disk yet, the served page shows
+        // the install prompt and the user fetches it explicitly with the ↓ button.
         navigateTo (StrudelPlugAudioProcessor::localStrudelToken);
-        if (! StrudelFetch::isInstalled())
-            fetchStrudel();   // first use: download, then the page reloads by itself
     };
 
     reloadButton.setTooltip ("Reload page");
@@ -48,6 +48,9 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
 
     fetchBtn.setTooltip ("Download / update Strudel from npm for the Local page");
     fetchBtn.onClick = [this] { fetchStrudel(); };
+
+    deleteBtn.setTooltip ("Delete the downloaded Strudel from disk (LOCAL then shows the install prompt again)");
+    deleteBtn.onClick = [this] { deleteStrudel(); };
 
     settingsBtn.setTooltip ("Settings");
     settingsBtn.setClickingTogglesState (true);
@@ -233,6 +236,10 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     fetchBtn.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff6ee7b7));
     addAndMakeVisible (fetchBtn);
 
+    deleteBtn.setColour (juce::TextButton::buttonColourId, darkBtnCol);
+    deleteBtn.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffff6b6b));
+    addAndMakeVisible (deleteBtn);
+
     settingsBtn.setColour (juce::TextButton::buttonColourId, darkBtnCol);
     settingsBtn.setColour (juce::TextButton::buttonOnColourId, darkTeal);
     settingsBtn.setColour (juce::TextButton::textColourOffId, textCol);
@@ -301,6 +308,15 @@ void StrudelPlugAudioProcessorEditor::onBrowserUrlChanged (const juce::String&)
 {
     updateModeButtons();
     const bool local = audioProcessor.isLocalStrudelUrl (audioProcessor.getServerUrl());
+
+    if (local && ! StrudelFetch::isInstalled())
+    {
+        // The served page is the "not installed" prompt: make it obvious in the LCD.
+        statusLabel.setText ("LOCAL: NOT INSTALLED", juce::dontSendNotification);
+        statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffb703));
+        return;
+    }
+
     statusLabel.setText (local ? "LOCAL: AUDIO+MIDI" : "ONLINE: AUDIO+MIDI", juce::dontSendNotification);
     statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xff00f4f4));
 }
@@ -357,6 +373,33 @@ void StrudelPlugAudioProcessorEditor::fetchStrudel()
             self->statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xffff5555));
         }
     });
+}
+
+// Removes the downloaded @strudel/repl build from disk. There is no automatic
+// re-download: the next time LOCAL is shown, the install prompt appears again.
+void StrudelPlugAudioProcessorEditor::deleteStrudel()
+{
+    if (! StrudelFetch::isInstalled())
+    {
+        statusLabel.setText ("STRUDEL NOT INSTALLED", juce::dontSendNotification);
+        statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffb703));
+        return;
+    }
+
+    if (StrudelFetch::removeInstalled())
+    {
+        statusLabel.setText ("STRUDEL DELETED", juce::dontSendNotification);
+        statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xff38ef7d));
+
+        // If we are on the local page, reload it so the install prompt shows.
+        if (audioProcessor.isLocalStrudelUrl (audioProcessor.getServerUrl()))
+            reloadPage();
+    }
+    else
+    {
+        statusLabel.setText ("DELETE FAILED", juce::dontSendNotification);
+        statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xffff5555));
+    }
 }
 
 void StrudelPlugAudioProcessorEditor::updateSyncButtonAppearance()
@@ -468,8 +511,9 @@ void StrudelPlugAudioProcessorEditor::resized()
     {
         auto row = bounds.removeFromTop (settingsHeight).reduced (8, 3);
 
-        fetchBtn.setBounds (row.removeFromRight (30).reduced (2, 0));
-        reloadButton.setBounds (row.removeFromRight (30).reduced (2, 0));
+        deleteBtn.setBounds (row.removeFromRight (58).reduced (2, 0));
+        fetchBtn.setBounds (row.removeFromRight (76).reduced (2, 0));
+        reloadButton.setBounds (row.removeFromRight (60).reduced (2, 0));
 
         srLabel.setBounds (row.removeFromLeft (24));
         srComboBox.setBounds (row.removeFromLeft (105).reduced (1, 1));
@@ -496,7 +540,7 @@ void StrudelPlugAudioProcessorEditor::setSettingsOpen (bool open)
     settingsOpen = open;
     settingsBtn.setToggleState (open, juce::dontSendNotification);
     for (auto* c : std::initializer_list<juce::Component*> { &srLabel, &srComboBox, &cushionLabel, &cushionComboBox,
-                                                            &telemetryLabel, &reloadButton, &fetchBtn })
+                                                            &telemetryLabel, &reloadButton, &fetchBtn, &deleteBtn })
         c->setVisible (open);
     resized();
     repaint();
