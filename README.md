@@ -34,15 +34,14 @@ Designed for live coders and electronic music producers, StrudelPlug eliminates 
   - When enabled, pressing **Play** in Bitwig triggers Strudel pattern evaluation.
   - Pressing **Stop** in Bitwig silences output instantly (0 ms) and stops the Strudel scheduler.
   - Toggle off for free-running live coding independent of DAW transport.
-- **Full DAW Project State Persistence (v1.0.9+)**: Live code typed into Strudel, target server URL, SYNC DAW toggle, sample rate, cushion size, and gain trim are automatically saved into your DAW project file and seamlessly restored upon opening.
+- **Full DAW Project State Persistence (v1.0.9+)**: Live code typed into Strudel, SYNC DAW toggle, sample rate, cushion size, and gain trim are automatically saved into your DAW project file and seamlessly restored upon opening.
 - **Ultra-Low CPU Architecture (v1.0.9+)**: 512-sample frame batching cuts WebKit IPC overhead by 75%, while an intelligent 500ms silence hangover drops CPU usage to **~0%** when DAW transport is stopped.
-- **Offline Node.js Server (`▶ Start Node`)**: Spawns a local Strudel REPL server in an internal background process with a single click, enabling 100% offline live coding and direct binary WebSocket streaming without HTTPS restrictions.
+- **Local Strudel**: The REPL is served from the plugin's own bridge server over plain `http`, so the page can open the MIDI-in WebSocket that an `https` page refuses. The `↓` button in the settings row (`⚙`, top right) downloads the latest `@strudel/repl` package from the npm registry into the user's app-data directory (`StrudelPlug/strudel`); press it again any time to update. Works offline afterwards (synth sounds only; samples still need internet). Until a build is installed the page shows a warning instead of a blank editor. Strudel is AGPL and is not bundled with the plugin.
 - **Extended Buffer Options (up to 16384 samples)**:
   - Selectable buffer cushion: `128`, `256`, `512`, `720` (15ms), `1024`, `2048`, `4096`, `8192`, `12000`, and `16384` samples (~340ms).
   - Real-time digital LCD telemetry display showing sample rate, transport state, output dB level, and buffer status.
 - **Transient De-Clicking**: Soft micro-fade on startup and buffer flushes eliminates DC offset clicks and digital pops.
 - **OpenSynth1 Aesthetic**: Sleek dark titanium hardware finish with cyan digital LCD readouts, dedicated options strip with real-time audio volume and MIDI activity LEDs, and output gain trim slider (-24 dB to +6 dB).
-- **Navigation Controls**: Address bar, Back/Forward/Reload buttons, quick presets (`strudel.cc`, local Node server `:54321`), and local server launcher (`▶ Start Node`).
 
 ---
 

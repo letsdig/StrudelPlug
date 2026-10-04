@@ -5,11 +5,15 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include "Sha1.h"
 #include "BridgeScript.h"
+#include "StrudelPage.h"
+#include "../StrudelFetch.h"
 
 #include <atomic>
 #include <vector>
 #include <mutex>
 #include <memory>
+#include <algorithm>
+#include <cerrno>
 
 #if JUCE_LINUX
  #include <sys/socket.h>
@@ -737,6 +741,29 @@ p { color: #94a3b8; font-size: 14px; line-height: 1.6; }
             return;
         }
 
+        // Local Strudel REPL: the host page is embedded (StrudelPage.h), the Strudel
+        // build itself is downloaded on first use (StrudelFetch.h) and served from disk.
+        if (path == "/strudel/" || path == "/strudel/index.html")
+        {
+            sendHttpResponse(socket, 200, "OK", "text/html; charset=utf-8",
+                             StrudelFetch::isInstalled() ? WebBridge::getStrudelPage()
+                                                         : WebBridge::getStrudelMissingPage());
+            return;
+        }
+        if (path.startsWith("/strudel/"))
+        {
+            auto rel = path.fromFirstOccurrenceOf("/strudel/", false, false);
+            auto file = StrudelFetch::directory().getChildFile(rel);
+            juce::MemoryBlock fileData;
+            if (rel.contains("..") || !file.existsAsFile() || !file.loadFileAsData(fileData))
+            {
+                sendHttpResponse(socket, 404, "Not Found", "text/plain", "Not Found");
+                return;
+            }
+            sendHttpResponse(socket, 200, "OK", getMimeType(file.getFileExtension()), fileData.getData(), fileData.getSize());
+            return;
+        }
+
         if (path.startsWith("/offline/"))
             path = path.substring(9);
         else if (path.startsWith("/"))
@@ -790,9 +817,36 @@ p { color: #94a3b8; font-size: 14px; line-height: 1.6; }
                               "Connection: close\r\n\r\n";
 
         auto utf8 = header.toRawUTF8();
-        socket.write(utf8, (int)std::strlen(utf8));
+        writeAll(socket, utf8, std::strlen(utf8));
         if (size > 0 && data != nullptr)
-            socket.write(data, (int)size);
+            writeAll(socket, data, size);
+    }
+
+    // The request read leaves the socket non-blocking, so send() returns short /
+    // EAGAIN on large bodies; keep writing until done, waiting when the buffer is full.
+    static void writeAll(juce::StreamingSocket& socket, const void* data, size_t size)
+    {
+        auto* p = static_cast<const char*>(data);
+        int stalls = 0;
+        while (size > 0)
+        {
+            int n = socket.write(p, (int) std::min<size_t>(size, 1 << 16));
+            if (n > 0)
+            {
+                p += n;
+                size -= (size_t) n;
+                stalls = 0;
+            }
+            else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && ++stalls < 500)
+            {
+                if (socket.waitUntilReady(false, 20) < 0)   // writable, 20ms
+                    return;
+            }
+            else
+            {
+                return;
+            }
+        }
     }
 
     void sendHttpResponse(juce::StreamingSocket& socket, int statusCode, const juce::String& statusText,

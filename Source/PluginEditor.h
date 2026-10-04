@@ -16,7 +16,6 @@
 /**
 */
 class StrudelPlugAudioProcessorEditor  : public juce::AudioProcessorEditor,
-                                         private juce::TextEditor::Listener,
                                          private juce::Timer
 {
 public:
@@ -27,7 +26,6 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    void navigateTo (const juce::String& url);
     void sendMidiToBrowser (const juce::MidiMessage& msg);
     void updateSyncButtonAppearance();
     void onBrowserUrlChanged (const juce::String& url);
@@ -35,37 +33,32 @@ public:
 private:
     StrudelPlugAudioProcessor& audioProcessor;
 
-    // --- Navigation Header Row ---
-    juce::TextButton backButton { juce::CharPointer_UTF8 ("\xe2\x97\x80") };    // ◀
-    juce::TextButton forwardButton { juce::CharPointer_UTF8 ("\xe2\x96\xb6") }; // ▶
-    juce::TextButton reloadButton { juce::CharPointer_UTF8 ("\xe2\x86\xbb") };  // ⟳
-    juce::TextEditor urlEditor;
-    juce::TextButton goButton { "GO" };
+    static constexpr int headerHeight   = 32;
+    static constexpr int settingsHeight = 36;
 
-    // Preset quick buttons
-    juce::TextButton strudelCcBtn { "strudel.cc" };
-    juce::TextButton localPort54321Btn { "Local :54321" };
-    juce::TextButton startNodeBtn { "▶ Start Node" };
-
+    // --- Header Row: status, transport, levels, gain; settings toggle at far right ---
     juce::Label statusLabel;
-
-    // --- Options Strip Controls ---
     juce::TextButton syncDawBtn { "● SYNC DAW" };
-    
-    juce::Label srLabel { {}, "Hz:" };
-    juce::ComboBox srComboBox;
-
-    juce::Label cushionLabel { {}, "Buf:" };
-    juce::ComboBox cushionComboBox;
-
-    juce::Label gainLabel { {}, "Gain:" };
-    juce::Slider gainSlider;
-
     juce::Label audioLevelLed { {}, "OUT" };
     juce::Label midiLed { {}, "MIDI" };
-    juce::Label telemetryLabel;
+    juce::Label gainLabel { {}, "Gain:" };
+    juce::Slider gainSlider;
+    juce::TextButton settingsBtn { juce::CharPointer_UTF8 ("\xe2\x9a\x99") };  // ⚙ shows/hides the settings row
 
-    void textEditorReturnKeyPressed (juce::TextEditor&) override;
+    // --- Settings Row (collapsed by default) ---
+    juce::Label srLabel { {}, "Hz:" };
+    juce::ComboBox srComboBox;
+    juce::Label cushionLabel { {}, "Buf:" };
+    juce::ComboBox cushionComboBox;
+    juce::Label telemetryLabel;
+    juce::TextButton reloadButton { juce::CharPointer_UTF8 ("\xe2\x86\xbb") };  // ⟳
+    juce::TextButton fetchBtn { juce::CharPointer_UTF8 ("\xe2\x86\x93") };     // ↓ download/update @strudel/repl
+    bool settingsOpen = false;
+
+    void setSettingsOpen (bool open);
+    void reloadPage();
+    void fetchStrudel();
+
     void timerCallback() override;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StrudelPlugAudioProcessorEditor)

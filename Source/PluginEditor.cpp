@@ -9,6 +9,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "StrudelFetch.h"
 
 //==============================================================================
 StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAudioProcessor& p)
@@ -25,37 +26,19 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     }
 
     // =========================================================================
-    // Navigation Row Callbacks & Tooltips
+    // Header Row Callbacks & Tooltips
     // =========================================================================
-    backButton.setTooltip ("Go back");
-    forwardButton.setTooltip ("Go forward");
-    reloadButton.setTooltip ("Reload page");
-    goButton.setTooltip ("Navigate to URL");
+    // Strudel is served by the plugin's own bridge server: no internet, and
+    // being plain http the page can open the MIDI-in WebSocket (https pages can't).
+    reloadButton.setTooltip ("Reload Strudel");
+    reloadButton.onClick = [this] { reloadPage(); };
 
-    backButton.onClick    = [this] { if (auto* b = audioProcessor.getBrowser()) b->goBack(); };
-    forwardButton.onClick = [this] { if (auto* b = audioProcessor.getBrowser()) b->goForward(); };
-    reloadButton.onClick  = [this] { if (auto* b = audioProcessor.getBrowser()) b->goToURL (urlEditor.getText().trim()); };
-    goButton.onClick      = [this] { navigateTo (urlEditor.getText().trim()); };
+    fetchBtn.setTooltip ("Download / update Strudel from npm");
+    fetchBtn.onClick = [this] { fetchStrudel(); };
 
-    strudelCcBtn.onClick       = [this] { navigateTo ("https://strudel.cc/"); };
-    localPort54321Btn.onClick  = [this] { navigateTo ("http://127.0.0.1:54321"); };
-    startNodeBtn.onClick       = [this]
-    {
-        statusLabel.setText ("STARTING NODE...", juce::dontSendNotification);
-        statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffb703));
-        bool ok = audioProcessor.startLocalServer();
-        if (ok)
-        {
-            statusLabel.setText ("NODE :54321 OK", juce::dontSendNotification);
-            statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xff38ef7d));
-            navigateTo ("http://127.0.0.1:54321");
-        }
-        else
-        {
-            statusLabel.setText ("START FAILED", juce::dontSendNotification);
-            statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xffff5555));
-        }
-    };
+    settingsBtn.setTooltip ("Settings");
+    settingsBtn.setClickingTogglesState (true);
+    settingsBtn.onClick = [this] { setSettingsOpen (settingsBtn.getToggleState()); };
 
     // =========================================================================
     // Options Strip Setup
@@ -229,20 +212,19 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     const auto cyanGlow    = juce::Colour (0xff00f4f4);
     const auto darkTeal    = juce::Colour (0xff082f36);
 
-    for (auto* b : { &backButton, &forwardButton, &reloadButton, &localPort54321Btn, &strudelCcBtn })
-    {
-        b->setColour (juce::TextButton::buttonColourId, darkBtnCol);
-        b->setColour (juce::TextButton::textColourOffId, textCol);
-        addAndMakeVisible (*b);
-    }
+    reloadButton.setColour (juce::TextButton::buttonColourId, darkBtnCol);
+    reloadButton.setColour (juce::TextButton::textColourOffId, textCol);
+    addAndMakeVisible (reloadButton);
 
-    goButton.setColour (juce::TextButton::buttonColourId, darkTeal);
-    goButton.setColour (juce::TextButton::textColourOffId, cyanGlow);
-    addAndMakeVisible (goButton);
+    fetchBtn.setColour (juce::TextButton::buttonColourId, darkBtnCol);
+    fetchBtn.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff6ee7b7));
+    addAndMakeVisible (fetchBtn);
 
-    startNodeBtn.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff123e20));
-    startNodeBtn.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff6ee7b7));
-    addAndMakeVisible (startNodeBtn);
+    settingsBtn.setColour (juce::TextButton::buttonColourId, darkBtnCol);
+    settingsBtn.setColour (juce::TextButton::buttonOnColourId, darkTeal);
+    settingsBtn.setColour (juce::TextButton::textColourOffId, textCol);
+    settingsBtn.setColour (juce::TextButton::textColourOnId, cyanGlow);
+    addAndMakeVisible (settingsBtn);
 
     for (auto* cb : { &srComboBox, &cushionComboBox })
     {
@@ -259,16 +241,6 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     gainSlider.setColour (juce::Slider::textBoxTextColourId, cyanGlow);
     gainSlider.setColour (juce::Slider::textBoxOutlineColourId, juce::Colour (0xff004448));
 
-    // Cyan LCD Digital URL Editor
-    urlEditor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff021b1b));
-    urlEditor.setColour (juce::TextEditor::textColourId, cyanGlow);
-    urlEditor.setColour (juce::TextEditor::outlineColourId, juce::Colour (0xff004848));
-    urlEditor.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colour (0xff00ffff));
-    urlEditor.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), 13.0f, juce::Font::bold)));
-    urlEditor.setTextToShowWhenEmpty ("Enter Strudel URL (e.g. https://strudel.cc/ or http://127.0.0.1:54321)", juce::Colour (0xff008888));
-    urlEditor.addListener (this);
-    addAndMakeVisible (urlEditor);
-
     // Cyan LCD Status Display
     statusLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff021b1b));
     statusLabel.setColour (juce::Label::outlineColourId, juce::Colour (0xff004848));
@@ -282,9 +254,7 @@ StrudelPlugAudioProcessorEditor::StrudelPlugAudioProcessorEditor (StrudelPlugAud
     setResizable (true, true);
     setResizeLimits (820, 500, 3840, 2160);
     setSize (1060, 720);
-
-    // Display current target URL
-    urlEditor.setText (audioProcessor.getServerUrl(), false);
+    setSettingsOpen (false);
 
     // Start 15Hz telemetry update timer
     startTimerHz (15);
@@ -302,11 +272,46 @@ StrudelPlugAudioProcessorEditor::~StrudelPlugAudioProcessorEditor()
         removeChildComponent (b);
 }
 
-void StrudelPlugAudioProcessorEditor::onBrowserUrlChanged (const juce::String& url)
+void StrudelPlugAudioProcessorEditor::onBrowserUrlChanged (const juce::String&)
 {
-    urlEditor.setText (url, false);
     statusLabel.setText ("ONLINE: AUDIO+MIDI", juce::dontSendNotification);
     statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xff00f4f4));
+}
+
+void StrudelPlugAudioProcessorEditor::reloadPage()
+{
+    statusLabel.setText ("CONNECTING...", juce::dontSendNotification);
+    statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffb703));
+    if (auto* b = audioProcessor.getBrowser())
+        b->goToURL (audioProcessor.getLocalStrudelUrl());
+}
+
+// Always downloads the latest @strudel/repl, then reloads the page so it picks
+// up the new build (or leaves the "not installed" warning if it was showing).
+void StrudelPlugAudioProcessorEditor::fetchStrudel()
+{
+    statusLabel.setText ("FETCHING STRUDEL...", juce::dontSendNotification);
+    statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffb703));
+    fetchBtn.setEnabled (false);
+
+    juce::Component::SafePointer<StrudelPlugAudioProcessorEditor> self (this);
+    StrudelFetch::downloadAsync ([self] (bool ok, juce::String error)
+    {
+        if (self == nullptr)
+            return;
+        self->fetchBtn.setEnabled (true);
+        if (ok)
+        {
+            self->statusLabel.setText ("STRUDEL READY", juce::dontSendNotification);
+            self->statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xff38ef7d));
+            self->reloadPage();
+        }
+        else
+        {
+            self->statusLabel.setText ("FETCH FAILED: " + error.toUpperCase(), juce::dontSendNotification);
+            self->statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xffff5555));
+        }
+    });
 }
 
 void StrudelPlugAudioProcessorEditor::updateSyncButtonAppearance()
@@ -339,20 +344,11 @@ void StrudelPlugAudioProcessorEditor::paint (juce::Graphics& g)
     g.drawRect (getLocalBounds(), 1);
 
     // =========================================================================
-    // Header Bar (y = 0..27)
+    // Header Bar: title, status LCD, sync, levels, gain, settings toggle
     // =========================================================================
     g.setColour (juce::Colours::white);
     g.setFont (juce::Font (juce::FontOptions (16.0f).withStyle ("Bold")));
-    g.drawText ("StrudelPlug", 14, 4, 110, 20, juce::Justification::centredLeft);
-
-    // OpenSynth1 Dark Slate Teal Badge (toned down, no bright red)
-    g.setColour (juce::Colour (0xff14222b));
-    g.fillRoundedRectangle (128.0f, 5.0f, 136.0f, 18.0f, 3.0f);
-    g.setColour (juce::Colour (0xff0096a6));
-    g.drawRoundedRectangle (128.0f, 5.0f, 136.0f, 18.0f, 3.0f, 1.0f);
-    g.setColour (juce::Colour (0xffe2e8f0));
-    g.setFont (juce::Font (juce::FontOptions (10.0f).withStyle ("Bold")));
-    g.drawText ("OPENSYNTH1 // DAW", 128, 5, 136, 18, juce::Justification::centred);
+    g.drawText ("StrudelPlug", 14, 0, 110, headerHeight, juce::Justification::centredLeft);
 
     // Hardware corner screws
     auto drawScrew = [&g] (float cx, float cy)
@@ -366,26 +362,29 @@ void StrudelPlugAudioProcessorEditor::paint (juce::Graphics& g)
     drawScrew (6.0f, 6.0f);
     drawScrew ((float) getWidth() - 6.0f, 6.0f);
 
-    // Separator lines
+    // Separator under header
+    int y = headerHeight;
     g.setColour (juce::Colour (0xff12141a));
-    g.drawHorizontalLine (27, 0.0f, (float) getWidth());
-    g.drawHorizontalLine (59, 0.0f, (float) getWidth());
+    g.drawHorizontalLine (y - 1, 0.0f, (float) getWidth());
     g.setColour (juce::Colour (0xff2d303e));
-    g.drawHorizontalLine (60, 0.0f, (float) getWidth());
+    g.drawHorizontalLine (y, 0.0f, (float) getWidth());
+    y += 1;
 
-    // Options section recessed groove background
-    auto optRect = juce::Rectangle<float> (0.0f, 61.0f, (float) getWidth(), 36.0f);
-    g.setColour (juce::Colour (0xff14161f));
-    g.fillRect (optRect);
-
-    // Separator line between Options and Browser
-    g.setColour (juce::Colour (0xff12141a));
-    g.drawHorizontalLine (97, 0.0f, (float) getWidth());
-    g.setColour (juce::Colour (0xff2d303e));
-    g.drawHorizontalLine (98, 0.0f, (float) getWidth());
+    if (settingsOpen)
+    {
+        // Settings strip recessed groove background + separator to browser
+        g.setColour (juce::Colour (0xff14161f));
+        g.fillRect (juce::Rectangle<float> (0.0f, (float) y, (float) getWidth(), (float) settingsHeight));
+        y += settingsHeight;
+        g.setColour (juce::Colour (0xff12141a));
+        g.drawHorizontalLine (y, 0.0f, (float) getWidth());
+        g.setColour (juce::Colour (0xff2d303e));
+        g.drawHorizontalLine (y + 1, 0.0f, (float) getWidth());
+        y += 2;
+    }
 
     // Browser recessed bezel frame
-    auto browserFrame = getLocalBounds().withTrimmedTop (99).reduced (5, 5).toFloat();
+    auto browserFrame = getLocalBounds().withTrimmedTop (y).reduced (5, 5).toFloat();
     g.setColour (juce::Colour (0xff101217));
     g.fillRoundedRectangle (browserFrame, 3.0f);
     g.setColour (juce::Colour (0xff323646));
@@ -396,58 +395,62 @@ void StrudelPlugAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds();
 
-    // Row 1 & 2: Top Header & Navigation Row (y = 0..58)
-    auto topArea = bounds.removeFromTop (58);
-    auto navRow = topArea.withTrimmedTop (28).reduced (8, 1);
+    // Row 1: Header: title (painted), status LCD, sync, levels, gain; settings toggle at far right
+    auto header = bounds.removeFromTop (headerHeight).reduced (16, 5);
+    settingsBtn.setBounds (header.removeFromRight (24).reduced (1, 0));
+    header.removeFromLeft (112);   // painted title
+    statusLabel.setBounds (header.removeFromLeft (150));
 
-    // Navigation Left: Back, Forward, Reload
-    backButton.setBounds (navRow.removeFromLeft (26).reduced (1, 0));
-    forwardButton.setBounds (navRow.removeFromLeft (26).reduced (1, 0));
-    reloadButton.setBounds (navRow.removeFromLeft (26).reduced (1, 0));
+    header.removeFromLeft (8);
+    syncDawBtn.setBounds (header.removeFromLeft (105));
 
-    // Navigation Right: Start Node, Local :54321, strudel.cc, Status, Go
-    startNodeBtn.setBounds (navRow.removeFromRight (95).reduced (2, 0));
-    localPort54321Btn.setBounds (navRow.removeFromRight (85).reduced (2, 0));
-    strudelCcBtn.setBounds (navRow.removeFromRight (75).reduced (2, 0));
-    statusLabel.setBounds (navRow.removeFromRight (140).reduced (2, 0));
-    goButton.setBounds (navRow.removeFromRight (40).reduced (2, 0));
+    header.removeFromLeft (8);
+    audioLevelLed.setBounds (header.removeFromLeft (84));
+    header.removeFromLeft (4);
+    midiLed.setBounds (header.removeFromLeft (56));
 
-    // Center is URL Editor
-    urlEditor.setBounds (navRow.reduced (4, 0));
+    header.removeFromLeft (8);
+    gainLabel.setBounds (header.removeFromLeft (36));
+    gainSlider.setBounds (header.removeFromLeft (juce::jmin (160, header.getWidth())));
 
-    // Row 3: Dedicated Options & Transport Strip (y = 61..97, height 36)
-    bounds.removeFromTop (3);
-    auto optionsRow = bounds.removeFromTop (36).reduced (8, 3);
+    // Row 2 (optional): Settings strip
+    bounds.removeFromTop (1);
+    if (settingsOpen)
+    {
+        auto row = bounds.removeFromTop (settingsHeight).reduced (8, 3);
 
-    syncDawBtn.setBounds (optionsRow.removeFromLeft (115).reduced (2, 0));
+        fetchBtn.setBounds (row.removeFromRight (30).reduced (2, 0));
+        reloadButton.setBounds (row.removeFromRight (30).reduced (2, 0));
 
-    optionsRow.removeFromLeft (6);
-    srLabel.setBounds (optionsRow.removeFromLeft (24));
-    srComboBox.setBounds (optionsRow.removeFromLeft (105).reduced (1, 1));
+        srLabel.setBounds (row.removeFromLeft (24));
+        srComboBox.setBounds (row.removeFromLeft (105).reduced (1, 1));
 
-    optionsRow.removeFromLeft (6);
-    cushionLabel.setBounds (optionsRow.removeFromLeft (28));
-    cushionComboBox.setBounds (optionsRow.removeFromLeft (130).reduced (1, 1));
+        row.removeFromLeft (6);
+        cushionLabel.setBounds (row.removeFromLeft (28));
+        cushionComboBox.setBounds (row.removeFromLeft (130).reduced (1, 1));
 
-    optionsRow.removeFromLeft (6);
-    gainLabel.setBounds (optionsRow.removeFromLeft (32));
-    gainSlider.setBounds (optionsRow.removeFromLeft (130).reduced (1, 1));
-
-    optionsRow.removeFromLeft (6);
-    audioLevelLed.setBounds (optionsRow.removeFromLeft (92).reduced (2, 0));
-
-    optionsRow.removeFromLeft (6);
-    midiLed.setBounds (optionsRow.removeFromLeft (92).reduced (2, 0));
-
-    // Remaining right area of options strip is Telemetry LCD
-    optionsRow.removeFromLeft (6);
-    telemetryLabel.setBounds (optionsRow.reduced (2, 0));
+        // Remaining middle area is Telemetry LCD
+        row.removeFromLeft (6);
+        telemetryLabel.setBounds (row.reduced (2, 0));
+        bounds.removeFromTop (2);
+    }
 
     // Browser Display Area
     bounds.removeFromTop (4);
     auto browserArea = bounds.reduced (6, 6);
     if (auto* b = audioProcessor.getBrowser())
         b->setBounds (browserArea);
+}
+
+void StrudelPlugAudioProcessorEditor::setSettingsOpen (bool open)
+{
+    settingsOpen = open;
+    settingsBtn.setToggleState (open, juce::dontSendNotification);
+    for (auto* c : std::initializer_list<juce::Component*> { &srLabel, &srComboBox, &cushionLabel, &cushionComboBox,
+                                                            &telemetryLabel, &reloadButton, &fetchBtn })
+        c->setVisible (open);
+    resized();
+    repaint();
 }
 
 void StrudelPlugAudioProcessorEditor::timerCallback()
@@ -501,31 +504,3 @@ void StrudelPlugAudioProcessorEditor::sendMidiToBrowser (const juce::MidiMessage
     });
 }
 
-void StrudelPlugAudioProcessorEditor::navigateTo (const juce::String& url)
-{
-    auto target = url.trim();
-    if (target.isEmpty())
-        return;
-
-    if (! target.startsWithIgnoreCase ("http://") && ! target.startsWithIgnoreCase ("https://") && ! target.startsWithIgnoreCase ("file://"))
-    {
-        if (target.startsWith ("localhost") || target.startsWith ("127.0.0.1"))
-            target = "http://" + target;
-        else
-            target = "https://" + target;
-    }
-
-    urlEditor.setText (target, false);
-    audioProcessor.setServerUrl (target);
-    statusLabel.setText ("CONNECTING...", juce::dontSendNotification);
-    statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xffffb703));
-
-    if (auto* b = audioProcessor.getBrowser())
-        b->goToURL (target);
-}
-
-void StrudelPlugAudioProcessorEditor::textEditorReturnKeyPressed (juce::TextEditor& editor)
-{
-    if (&editor == &urlEditor)
-        navigateTo (urlEditor.getText().trim());
-}

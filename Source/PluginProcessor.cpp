@@ -12,7 +12,6 @@
 juce::String StrudelPlugAudioProcessor::sharedServerUrl;
 juce::String StrudelPlugAudioProcessor::sharedSessionId;
 bool StrudelPlugAudioProcessor::sharedServerStarted = false;
-std::unique_ptr<juce::ChildProcess> StrudelPlugAudioProcessor::localServerProcess;
 
 //==============================================================================
 StrudelPlugAudioProcessor::StrudelPlugAudioProcessor()
@@ -27,8 +26,10 @@ StrudelPlugAudioProcessor::StrudelPlugAudioProcessor()
                        )
 #endif
 {
+   #if JUCE_LINUX
     setenv ("WEBKIT_DISABLE_DMABUF_RENDERER", "1", 1);
     setenv ("WEBKIT_DISABLE_COMPOSITING_MODE", "1", 1);
+   #endif
 
     bridgeServer.startServer();
 }
@@ -252,7 +253,9 @@ void StrudelPlugAudioProcessor::createPersistentBrowser()
     juce::WebBrowserComponent::Options options;
     options = options.withNativeIntegrationEnabled (true)
                      .withKeepPageLoadedWhenBrowserIsHidden()
+                    #if JUCE_LINUX
                      .withUserAgent ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
+                    #endif
                      .withUserScript (WebBridge::getInjectionScript (bridgeServer.getPort(), getEffectiveSampleRate(), 512, lastDawBpm.load()))
                      .withEventListener ("dawAudioData", [this] (const juce::var& data)
                      {
@@ -281,6 +284,10 @@ void StrudelPlugAudioProcessor::createPersistentBrowser()
                              bridgeServer.injectMidiFromBrowser (status, d1, d2);
                          }
                      })
+                     .withEventListener ("requestCode", [this] (const juce::var&)
+                     {
+                         restoreBrowserCode (code);
+                     })
                      .withEventListener ("saveCode", [this] (const juce::var& data)
                      {
                          if (auto* obj = data.getDynamicObject())
@@ -299,7 +306,6 @@ void StrudelPlugAudioProcessor::createPersistentBrowser()
         options,
         [this] (const juce::String& loadedUrl)
         {
-            setServerUrl (loadedUrl);
             if (auto* ed = activeEditor.load())
                 ed->onBrowserUrlChanged (loadedUrl);
         },
@@ -324,10 +330,12 @@ void StrudelPlugAudioProcessor::createPersistentBrowser()
             }
         });
 
-    auto target = getServerUrl();
-    if (target.trim().isEmpty())
-        target = "https://strudel.cc/";
-    browser->goToURL (target);
+    browser->goToURL (getLocalStrudelUrl());
+}
+
+juce::String StrudelPlugAudioProcessor::getLocalStrudelUrl() const
+{
+    return "http://127.0.0.1:" + juce::String (bridgeServer.getPort()) + "/strudel/";
 }
 
 void StrudelPlugAudioProcessor::restoreBrowserCode (const juce::String& codeToRestore)
@@ -452,37 +460,6 @@ void StrudelPlugAudioProcessor::evaluateCode()
         sendHttpRequest (sharedServerUrl + "/api/evaluate", code, serverStatus);
 }
 
-bool StrudelPlugAudioProcessor::startLocalServer (const juce::String& localStrudelPath)
-{
-    if (localServerProcess != nullptr && localServerProcess->isRunning())
-    {
-        sharedServerUrl = "http://127.0.0.1:54321";
-        serverStatus = "Local Strudel server running on :54321";
-        return true;
-    }
-
-    juce::String command;
-    if (localStrudelPath.trim().isNotEmpty())
-        command = "node " + localStrudelPath.trim() + " --port 54321";
-    else
-        command = "npx -y @strudel/repl --port 54321";
-
-    serverStatus = "Launching local Strudel server...";
-
-    localServerProcess = std::make_unique<juce::ChildProcess>();
-    if (localServerProcess->start (command) && localServerProcess->isRunning())
-    {
-        sharedServerStarted = true;
-        sharedServerUrl = "http://127.0.0.1:54321";
-        sharedSessionId = "local-" + juce::String (juce::Time::getMillisecondCounterHiRes());
-        serverStatus = "Local Strudel server running on :54321";
-        return true;
-    }
-
-    serverStatus = "Cannot start local Strudel server";
-    return false;
-}
-
 bool StrudelPlugAudioProcessor::connectRemoteServer (const juce::String& newRemoteUrl)
 {
     if (newRemoteUrl.trim().isNotEmpty())
@@ -524,7 +501,7 @@ void StrudelPlugAudioProcessor::setServerUrl (const juce::String& url)
 
 juce::String StrudelPlugAudioProcessor::getServerUrl() const
 {
-    return sharedServerUrl.isNotEmpty() ? sharedServerUrl : "https://strudel.cc/";
+    return sharedServerUrl;
 }
 
 void StrudelPlugAudioProcessor::sendMidiRoute (const juce::String& midiRoute)
