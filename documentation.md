@@ -115,11 +115,11 @@ $: chord("<Cm7 Fm7 Gm7 Cm7>").voicing().midi()
 ### Installation Steps
 ```bash
 # 1. Download release archive
-tar -xzf StrudelPlug-v1.0.9-linux-x86_64.tar.gz
+tar -xzf StrudelPlug-v1.1.0-linux-x86_64.tar.gz
 
 # 2. Copy to VST3 folder
 mkdir -p ~/.vst3
-cp -r StrudelPlug-v1.0.9-linux-x86_64/StrudelPlug.vst3 ~/.vst3/
+cp -r StrudelPlug-v1.1.0-linux-x86_64/StrudelPlug.vst3 ~/.vst3/
 ```
 
 After installation, perform a plugin rescan in your DAW.
