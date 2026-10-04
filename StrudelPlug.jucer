@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<JUCERPROJECT id="FllXfg" name="StrudelPlug" projectType="audioplug" useAppConfig="0"
+<JUCERPROJECT id="FllXfg" name="StrudelPlug" companyName="letsdig" companyWebsite="github.com/letsdig/StrudelPlug" projectType="audioplug" useAppConfig="0"
               addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1" pluginFormats="buildVST3"
               version="1.0.9"
               pluginCharacteristicsValue="pluginProducesMidiOut,pluginWantsMidiIn" pluginVST3Category="Instrument,Tools">

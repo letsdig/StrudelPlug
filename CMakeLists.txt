@@ -17,10 +17,12 @@ endif()
 
 juce_add_plugin(StrudelPlug
     PRODUCT_NAME "StrudelPlug"
+    # Plugin codes must match the Projucer build (StrudelPlug.jucer): changing them
+    # changes the VST3 class ID and DAWs will no longer find the plugin in saved projects.
     COMPANY_NAME "letsdig"
-    BUNDLE_ID "com.letsdig.strudelplug"
-    PLUGIN_MANUFACTURER_CODE Ltdg
-    PLUGIN_CODE Strd
+    BUNDLE_ID "com.letsdig.StrudelPlug"
+    PLUGIN_MANUFACTURER_CODE Manu
+    PLUGIN_CODE Fllx
     FORMATS ${FORMATS}
     IS_SYNTH FALSE
     NEEDS_MIDI_INPUT TRUE
