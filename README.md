@@ -110,6 +110,19 @@ For in-depth architecture details, real-time safety, lookahead scheduling, and p
 
 ---
 
+## Acknowledgements
+
+Huge thanks to everyone who made StrudelPlug what it is:
+
+- **[Alex McLean (@yaxu)](https://github.com/yaxu)** and the Strudel community, for [Strudel](https://strudel.cc/) itself, and for pointing out the licensing question ([#1](https://github.com/letsdig/StrudelPlug/issues/1)) that led to the AGPL relicense.
+- **[Vincent De Feo (@vinzdef)](https://github.com/vinzdef)**, for the local-Strudel page ([#4](https://github.com/letsdig/StrudelPlug/pull/4)) and the macOS CMake build ([#2](https://github.com/letsdig/StrudelPlug/pull/2)).
+- The original StrudelPlug author, whose VST3 identifiers (`Manu` / `Fllx`) are preserved so that saved DAW projects keep finding the plugin.
+- Everyone who filed issues, tested builds and shared feedback.
+
+Thank you! 🙏
+
+---
+
 ## License
 
 Copyright (C) 2026 letsdig
